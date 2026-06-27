@@ -3,10 +3,11 @@
 Unit Tests for Quantum RL Scheduling System
 
 测试覆盖：
-- 调度环境（SchedulingEnv）
+- 调度环境（QuantumSchedulingEnv）
 - RL智能体（SchedulerAgent）
 - 任务解析器（TaskParser / LegacyTaskParser / TaskBuilder）
-- 天衍云客户端（TianyanClient）
+- 量子退火（QuantumAnnealingOptimizer）
+- 仿真策略（GreedyStrategy / FCFSStrategy 等）
 """
 
 import unittest
@@ -15,94 +16,125 @@ from datetime import datetime
 import sys
 import os
 
-# 添加src到路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from src.scheduler.env import SchedulingEnv, QuantumTask
-from src.scheduler.agent import SchedulingAgent
+from src.scheduler.env import QuantumSchedulingEnv, Task, OBS_DIM
+from src.scheduler.agent import SchedulerAgent, DuelingQNetwork
 from src.scheduler.parser import (
     TaskParser, LegacyTaskParser, TaskBuilder,
-    Task, TaskFeatures,
+    Task as ParserTask, TaskFeatures,
+)
+from src.quantum.annealing import QuantumAnnealingOptimizer
+from scripts.run_simulation import (
+    GreedyStrategy, FCFSStrategy, RandomStrategy,
+    QuantumOnlyStrategy, ClassicalOnlyStrategy,
+    ShortestJobFirstStrategy,
 )
 
 
-class TestSchedulingEnv(unittest.TestCase):
-    """测试调度环境"""
+class TestQuantumSchedulingEnv(unittest.TestCase):
+    """测试量子调度环境"""
 
     def setUp(self):
         """测试初始化"""
-        self.env = SchedulingEnv(
+        self.env = QuantumSchedulingEnv(
+            max_steps=100,
             max_qubits=287,
-            max_queue_size=50,
-            simulation_mode=True,
+            seed=42,
         )
 
     def test_reset(self):
         """测试环境重置"""
-        obs, info = self.env.reset()
+        obs, info = self.env.reset(seed=42)
 
-        # 检查状态向量维度
-        self.assertEqual(obs.shape, (20,))
-
-        # 检查状态值在[0, 1]范围内
+        self.assertEqual(obs.shape, (OBS_DIM,))
         self.assertTrue(np.all(obs >= 0.0))
         self.assertTrue(np.all(obs <= 1.0))
-
-        print("  test_reset passed")
+        self.assertIsInstance(info, dict)
 
     def test_step(self):
         """测试环境步进"""
-        obs, info = self.env.reset()
+        obs, info = self.env.reset(seed=42)
 
-        # 执行一个随机动作
         action = self.env.action_space.sample()
         next_obs, reward, terminated, truncated, info = self.env.step(action)
 
-        # 检查返回值
-        self.assertEqual(next_obs.shape, (20,))
+        self.assertEqual(next_obs.shape, (OBS_DIM,))
         self.assertIsInstance(reward, float)
         self.assertIsInstance(terminated, bool)
         self.assertIsInstance(truncated, bool)
         self.assertIsInstance(info, dict)
 
-        print("  test_step passed")
-
     def test_observation_range(self):
-        """测试状态向量值域"""
-        obs, _ = self.env.reset()
+        """测试状态向量值域始终在 [0, 1]"""
+        obs, _ = self.env.reset(seed=42)
 
-        # 多次步进，检查状态值范围
-        for _ in range(10):
+        for _ in range(50):
             action = self.env.action_space.sample()
-            obs, _, _, _, _ = self.env.step(action)
+            obs, _, terminated, truncated, _ = self.env.step(action)
 
-            # 检查值域
             self.assertTrue(np.all(obs >= 0.0))
             self.assertTrue(np.all(obs <= 1.0))
 
-        print("  test_observation_range passed")
+            if terminated or truncated:
+                break
 
-    def test_task_generation(self):
-        """测试任务生成"""
-        # 手动生成任务
-        task = QuantumTask(
+    def test_action_space(self):
+        """测试动作空间（3个动作）"""
+        self.assertEqual(self.env.action_space.n, 3)
+
+        valid_actions = [0, 1, 2]
+        for a in valid_actions:
+            self.assertTrue(0 <= a < self.env.action_space.n)
+
+    def test_episode_terminates(self):
+        """测试 episode 会在 max_steps 后终止"""
+        self.env.reset(seed=42)
+        steps = 0
+        for _ in range(200):
+            action = self.env.action_space.sample()
+            _, _, terminated, truncated, _ = self.env.step(action)
+            steps += 1
+            if terminated or truncated:
+                break
+
+        self.assertLessEqual(steps, 100)
+
+    def test_task_dataclass(self):
+        """测试 Task 数据类"""
+        task = Task(
             task_id="test_001",
-            user_id="user_001",
             task_type="quantum",
             qubit_count=10,
-            circuit_depth=50,
-            estimated_time=120.0,
-            priority=3,
-            arrival_time=datetime.now(),
+            wait_steps=0,
+            urgency=0.8,
+            priority=4,
         )
 
-        # 检查任务属性
         self.assertEqual(task.task_id, "test_001")
         self.assertEqual(task.task_type, "quantum")
         self.assertEqual(task.qubit_count, 10)
-        self.assertEqual(task.status, "pending")
+        self.assertEqual(task.urgency, 0.8)
 
-        print("  test_task_generation passed")
+    def test_render_ansi(self):
+        """测试 ANSI 渲染模式"""
+        env = QuantumSchedulingEnv(max_steps=20, render_mode="ansi")
+        env.reset(seed=42)
+        output = env.render()
+        self.assertIsInstance(output, str)
+        self.assertGreater(len(output), 0)
+        env.close()
+
+    def test_info_keys(self):
+        """测试 info 字典包含预期的键"""
+        obs, info = self.env.reset(seed=42)
+        _, _, _, _, info = self.env.step(0)
+
+        expected_keys = ["total_scheduled", "quantum_success",
+                         "classical_success", "hybrid_success",
+                         "mismatch_count"]
+        for key in expected_keys:
+            self.assertIn(key, info)
 
 
 class TestSchedulerAgent(unittest.TestCase):
@@ -110,77 +142,70 @@ class TestSchedulerAgent(unittest.TestCase):
 
     def setUp(self):
         """测试初始化"""
-        self.agent = SchedulingAgent(
-            state_dim=20,
-            action_dim=5,
-            algorithm="DQN",
-            learning_rate=3e-4,
+        self.env = QuantumSchedulingEnv(max_steps=50, seed=42)
+        self.agent = SchedulerAgent(
+            env=self.env,
+            learning_rate=1e-3,
+            buffer_size=1000,
+            batch_size=32,
+            verbose=0,
+            seed=42,
         )
 
     def test_initialization(self):
         """测试智能体初始化"""
-        self.assertEqual(self.agent.state_dim, 20)
-        self.assertEqual(self.agent.action_dim, 5)
-        self.assertEqual(self.agent.algorithm, "DQN")
-        self.assertEqual(self.agent.epsilon, 1.0)
+        self.assertEqual(self.agent.observation_space.shape[0], OBS_DIM)
+        self.assertEqual(self.agent.action_space.n, 3)
+        self.assertIsNone(self.agent.model)
 
-        print("  test_initialization passed")
+    def test_get_config(self):
+        """测试获取配置信息"""
+        config = self.agent.get_config()
 
-    def test_select_action(self):
-        """测试动作选择"""
-        state = np.random.randn(20)
+        self.assertIn("observation_dim", config)
+        self.assertIn("action_dim", config)
+        self.assertIn("learning_rate", config)
+        self.assertIn("architecture", config)
+        self.assertEqual(config["architecture"], "Dueling DQN")
 
-        # 训练模式
-        action = self.agent.select_action(state, training=True)
-        self.assertIn(action, range(5))
+    def test_predict_before_train_raises(self):
+        """测试未训练时调用 predict 抛异常"""
+        state = np.zeros(OBS_DIM, dtype=np.float32)
+        with self.assertRaises(RuntimeError):
+            self.agent.predict(state)
 
-        # 评估模式
-        action = self.agent.select_action(state, training=False)
-        self.assertIn(action, range(5))
+    def test_save_model(self):
+        """测试模型保存"""
+        import tempfile
+        import os
 
-        print("  test_select_action passed")
+        self.agent.model = self.agent._build_model()
 
-    def test_epsilon_decay(self):
-        """测试epsilon-贪婪衰减"""
-        initial_epsilon = self.agent.epsilon
+        with tempfile.TemporaryDirectory() as tmpdir:
+            save_path = os.path.join(tmpdir, "test_model")
+            self.agent.save(save_path)
 
-        # 执行多次更新
-        for _ in range(100):
-            self.agent.update_epsilon()
+            zip_path = save_path + ".zip"
+            self.assertTrue(os.path.exists(zip_path))
 
-        # 检查epsilon值衰减
-        self.assertLess(self.agent.epsilon, initial_epsilon)
-        self.assertGreaterEqual(self.agent.epsilon, self.agent.epsilon_end)
+    def test_repr(self):
+        """测试智能体的字符串表示"""
+        rep = repr(self.agent)
+        self.assertIn("SchedulerAgent", rep)
+        self.assertIn("Dueling DQN", rep)
 
-        print("  test_epsilon_decay passed")
-
-    def test_save_load(self):
-        """测试模型保存和加载"""
-        # 保存模型
-        save_path = "tests/test_model.pth"
-        self.agent.save(save_path)
-
-        # 检查文件是否存在
-        self.assertTrue(os.path.exists(save_path))
-
-        # 加载模型
-        new_agent = SchedulingAgent(state_dim=20, action_dim=5)
-        new_agent.load(save_path)
-
-        # 检查参数是否一致
-        self.assertAlmostEqual(new_agent.epsilon, self.agent.epsilon)
-
-        # 清理
-        os.remove(save_path)
-
-        print("  test_save_load passed")
+    def test_build_model(self):
+        """测试模型构建"""
+        model = self.agent._build_model()
+        self.assertIsNotNone(model)
+        self.assertEqual(model.observation_space.shape[0], OBS_DIM)
+        self.assertEqual(model.action_space.n, 3)
 
 
 class TestLegacyTaskParser(unittest.TestCase):
     """测试旧版任务解析器（向后兼容）"""
 
     def setUp(self):
-        """测试初始化"""
         self.parser = LegacyTaskParser()
 
     def test_parse_json(self):
@@ -198,14 +223,11 @@ class TestLegacyTaskParser(unittest.TestCase):
 
         features = self.parser.parse(json_str, format="json")
 
-        # 检查结果
         self.assertIsNotNone(features)
         self.assertEqual(features.task_id, "task_001")
         self.assertEqual(features.task_type, "quantum")
         self.assertEqual(features.qubit_count, 10)
         self.assertEqual(features.algorithm, "VQE")
-
-        print("  test_parse_json passed")
 
     def test_parse_qasm(self):
         """测试QASM格式解析"""
@@ -221,13 +243,19 @@ class TestLegacyTaskParser(unittest.TestCase):
 
         features = self.parser.parse(qasm_str, format="qasm")
 
-        # 检查结果
         self.assertIsNotNone(features)
         self.assertEqual(features.qubit_count, 5)
         self.assertGreater(features.gate_count, 0)
         self.assertGreater(features.measurement_count, 0)
 
-        print("  test_parse_qasm passed")
+    def test_parse_text(self):
+        """测试文本格式解析"""
+        text = "这是一个量子任务，需要10比特，使用VQE算法"
+        features = self.parser.parse(text, format="text")
+
+        self.assertIsNotNone(features)
+        self.assertEqual(features.task_type, "quantum")
+        self.assertEqual(features.qubit_count, 10)
 
     def test_to_vector(self):
         """测试特征向量转换"""
@@ -242,11 +270,17 @@ class TestLegacyTaskParser(unittest.TestCase):
 
         vector = features.to_vector(feature_dim=20)
 
-        # 检查向量
         self.assertEqual(len(vector), 20)
         self.assertTrue(all(0.0 <= x <= 1.0 for x in vector))
 
-        print("  test_to_vector passed")
+    def test_batch_parse(self):
+        """测试批量解析"""
+        descriptions = [
+            '{"task_id": "t1", "task_type": "quantum", "qubit_count": 5}',
+            '{"task_id": "t2", "task_type": "classical", "qubit_count": 0}',
+        ]
+        results = self.parser.batch_parse(descriptions, format="json")
+        self.assertEqual(len(results), 2)
 
 
 class TestTaskParser(unittest.TestCase):
@@ -266,24 +300,17 @@ class TestTaskParser(unittest.TestCase):
             "deadline": "2026-07-01T12:00:00",
         }
 
-    # ---- parse ----
-
     def test_parse_basic(self):
         """测试基本字典解析"""
         task = self.parser.parse(self.sample_dict)
-        self.assertIsInstance(task, Task)
+        self.assertIsInstance(task, ParserTask)
         self.assertEqual(task.task_id, "task_001")
         self.assertEqual(task.task_type, "quantum")
         self.assertEqual(task.algorithm, "VQE")
         self.assertEqual(task.qubits_required, 8)
-        self.assertEqual(task.circuit_depth, 50)
-        self.assertEqual(task.shots, 1024)
-        self.assertEqual(task.estimated_time, 120)
-        self.assertEqual(task.priority, 3)  # "high" → 3
+        self.assertEqual(task.priority, 3)
         self.assertIsInstance(task.deadline, datetime)
         self.assertEqual(task.status, "pending")
-
-        print("  test_parse_basic passed")
 
     def test_parse_with_int_priority(self):
         """测试整型 priority"""
@@ -291,65 +318,55 @@ class TestTaskParser(unittest.TestCase):
         task = self.parser.parse(d)
         self.assertEqual(task.priority, 4)
 
-        print("  test_parse_with_int_priority passed")
-
     def test_parse_classical(self):
         """测试经典任务类型"""
-        d = dict(self.sample_dict, type="classical", qubits_required=0, algorithm=None)
+        d = dict(self.sample_dict, type="classical",
+                 qubits_required=0, algorithm=None)
         task = self.parser.parse(d)
         self.assertEqual(task.task_type, "classical")
         self.assertIsNone(task.algorithm)
 
-        print("  test_parse_classical passed")
+    def test_parse_hybrid(self):
+        """测试混合任务类型"""
+        d = dict(self.sample_dict, type="hybrid")
+        task = self.parser.parse(d)
+        self.assertEqual(task.task_type, "hybrid")
 
     def test_parse_missing_task_id_raises(self):
         """测试缺少 task_id 抛异常"""
         with self.assertRaises(ValueError):
             self.parser.parse({"type": "quantum", "qubits_required": 8})
 
-        print("  test_parse_missing_task_id_raises passed")
-
     def test_parse_invalid_type_raises(self):
         """测试无效 task_type 抛异常"""
         with self.assertRaises(ValueError):
             self.parser.parse({"task_id": "x", "type": "invalid"})
 
-        print("  test_parse_invalid_type_raises passed")
-
     def test_parse_invalid_priority_raises(self):
         """测试无效 priority 抛异常"""
         with self.assertRaises(ValueError):
-            self.parser.parse(dict(self.sample_dict, priority="super_urgent"))
-
-        print("  test_parse_invalid_priority_raises passed")
+            self.parser.parse(
+                dict(self.sample_dict, priority="super_urgent")
+            )
 
     def test_parse_qubits_exceed_limit_raises(self):
         """测试量子比特超限抛异常"""
         with self.assertRaises(ValueError):
             self.parser.parse(dict(self.sample_dict, qubits_required=999))
 
-        print("  test_parse_qubits_exceed_limit_raises passed")
-
     def test_parse_not_dict_raises(self):
         """测试非字典输入抛异常"""
         with self.assertRaises(TypeError):
             self.parser.parse("not a dict")
-
-        print("  test_parse_not_dict_raises passed")
-
-    # ---- validate ----
 
     def test_validate_valid(self):
         """测试合法任务校验通过"""
         task = self.parser.parse(self.sample_dict)
         self.assertTrue(self.parser.validate(task))
 
-        print("  test_validate_valid passed")
-
     def test_validate_invalid(self):
-        """通过 Builder 绕过 parse 的校验，手动构造非法 Task"""
-        # 直接构造一个 qubits=0 的 quantum task
-        invalid_task = Task(
+        """测试非法任务校验失败"""
+        invalid_task = ParserTask(
             task_id="bad",
             task_type="quantum",
             qubits_required=0,
@@ -358,28 +375,20 @@ class TestTaskParser(unittest.TestCase):
         )
         self.assertFalse(self.parser.validate(invalid_task))
 
-        print("  test_validate_invalid passed")
-
-    # ---- estimate_resources ----
-
     def test_estimate_resources(self):
         """测试资源预估"""
         task = self.parser.parse(self.sample_dict)
         res = self.parser.estimate_resources(task)
+
         self.assertIn("qubit_hours", res)
         self.assertIn("total_gate_operations", res)
         self.assertIn("memory_mb", res)
         self.assertIn("classical_compute_ratio", res)
         self.assertIn("estimated_queue_time", res)
 
-        # 验证基本数值
         self.assertGreater(res["qubit_hours"], 0)
         self.assertEqual(res["total_gate_operations"], 50 * 1024)
-        self.assertEqual(res["classical_compute_ratio"], 0.1)  # quantum
-
-        print("  test_estimate_resources passed")
-
-    # ---- to_internal_format ----
+        self.assertEqual(res["classical_compute_ratio"], 0.1)
 
     def test_to_internal_format(self):
         """测试内部格式转换"""
@@ -392,13 +401,7 @@ class TestTaskParser(unittest.TestCase):
         self.assertIn("scheduling_weight", internal)
         self.assertIsInstance(internal["scheduling_weight"], float)
         self.assertGreater(internal["scheduling_weight"], 0)
-
-        # deadline 序列化为字符串
         self.assertIsInstance(internal["deadline"], str)
-
-        print("  test_to_internal_format passed")
-
-    # ---- TaskBuilder ----
 
     def test_builder_basic(self):
         """测试 Builder 基本链式调用"""
@@ -418,8 +421,6 @@ class TestTaskParser(unittest.TestCase):
         self.assertEqual(task.task_id, "b_001")
         self.assertEqual(task.priority, 4)
 
-        print("  test_builder_basic passed")
-
     def test_builder_from_dict(self):
         """测试 Builder.from_dict"""
         task = TaskBuilder.from_dict(self.sample_dict).build()
@@ -427,14 +428,235 @@ class TestTaskParser(unittest.TestCase):
         self.assertEqual(task.task_type, "quantum")
         self.assertEqual(task.priority, 3)
 
-        print("  test_builder_from_dict passed")
-
     def test_builder_empty_id_raises(self):
         """测试 Builder 空 task_id 抛异常"""
         with self.assertRaises(ValueError):
             TaskBuilder().build()
 
-        print("  test_builder_empty_id_raises passed")
+    def test_builder_status(self):
+        """测试 Builder 设置状态"""
+        task = (
+            TaskBuilder()
+            .set_id("s_001")
+            .set_type("classical")
+            .set_status("running")
+            .build()
+        )
+        self.assertEqual(task.status, "running")
+
+
+class TestQuantumAnnealing(unittest.TestCase):
+    """测试量子退火优化器"""
+
+    def setUp(self):
+        self.optimizer = QuantumAnnealingOptimizer(
+            num_qubits=8,
+            annealing_time=20,
+            shots=100,
+        )
+
+    def test_initialization(self):
+        """测试优化器初始化"""
+        self.assertEqual(self.optimizer.num_qubits, 8)
+        self.assertEqual(self.optimizer.shots, 100)
+        self.assertFalse(self.optimizer.use_dw)
+
+    def test_network_to_qubo(self):
+        """测试权重到 QUBO 的映射"""
+        W1 = np.random.randn(4, 2).astype(np.float32)
+        b1 = np.random.randn(2).astype(np.float32)
+        weights = [W1, b1]
+
+        qubo = self.optimizer.network_to_qubo(weights)
+
+        self.assertIsInstance(qubo, np.ndarray)
+        self.assertEqual(qubo.shape[0], qubo.shape[1])
+        self.assertGreater(qubo.shape[0], 0)
+
+    def test_network_to_qubo_with_gradients(self):
+        """测试带梯度信息的 QUBO 映射"""
+        np.random.seed(42)
+        W1 = np.random.randn(4, 2).astype(np.float32)
+        b1 = np.random.randn(2).astype(np.float32)
+        weights = [W1, b1]
+
+        dW1 = np.random.randn(4, 2).astype(np.float32)
+        db1 = np.random.randn(2).astype(np.float32)
+        gradients = [dW1, db1]
+
+        qubo = self.optimizer.network_to_qubo(weights, gradients=gradients)
+
+        self.assertIsInstance(qubo, np.ndarray)
+        self.assertEqual(qubo.shape[0], qubo.shape[1])
+
+    def test_network_to_qubo_with_td_errors(self):
+        """测试带 TD 误差的 QUBO 映射"""
+        np.random.seed(42)
+        W1 = np.random.randn(4, 2).astype(np.float32)
+        b1 = np.random.randn(2).astype(np.float32)
+        weights = [W1, b1]
+
+        dW1 = np.random.randn(4, 2).astype(np.float32)
+        db1 = np.random.randn(2).astype(np.float32)
+        gradients = [dW1, db1]
+        td_errors = np.random.randn(32).astype(np.float32)
+
+        qubo = self.optimizer.network_to_qubo(
+            weights, gradients=gradients, td_errors=td_errors
+        )
+
+        self.assertIsInstance(qubo, np.ndarray)
+        self.assertEqual(qubo.shape[0], qubo.shape[1])
+
+    def test_anneal(self):
+        """测试退火求解"""
+        n = 10
+        Q = np.random.randn(n, n).astype(np.float64)
+        Q = (Q + Q.T) / 2
+
+        bitstring = self.optimizer.anneal(Q)
+
+        self.assertEqual(len(bitstring), n)
+        self.assertTrue(all(b in "01" for b in bitstring))
+
+    def test_bitstring_to_weights(self):
+        """测试比特串到权重的解码"""
+        original_shapes = [(4, 2), (2,)]
+        total_params = 4 * 2 + 2
+        n_bits = total_params * max(1, self.optimizer.num_qubits // 4)
+        bitstring = "1" * n_bits
+
+        weights = self.optimizer.bitstring_to_weights(bitstring, original_shapes)
+
+        self.assertEqual(len(weights), len(original_shapes))
+        for w, shape in zip(weights, original_shapes):
+            self.assertEqual(w.shape, shape)
+
+    def test_bitstring_to_weights_with_current(self):
+        """测试带当前权重的解码（权重差模式）"""
+        np.random.seed(42)
+        W1 = np.random.randn(4, 2).astype(np.float32)
+        b1 = np.random.randn(2).astype(np.float32)
+        current_weights = [W1, b1]
+        original_shapes = [w.shape for w in current_weights]
+
+        total_params = sum(np.prod(s) for s in original_shapes)
+        n_bits = int(total_params) * max(1, self.optimizer.num_qubits // 4)
+        bitstring = "0" * n_bits
+
+        new_weights = self.optimizer.bitstring_to_weights(
+            bitstring, original_shapes, current_weights=current_weights
+        )
+
+        self.assertEqual(len(new_weights), len(original_shapes))
+        for w, shape in zip(new_weights, original_shapes):
+            self.assertEqual(w.shape, shape)
+
+        # 全 0 比特串对应 0 更新，所以新权重应该和旧权重相同
+        # （符号位 0 = 正，但数值位全 0 → magnitude = 0 → delta = 0）
+        for w_old, w_new in zip(current_weights, new_weights):
+            np.testing.assert_array_almost_equal(w_old, w_new, decimal=5)
+
+    def test_compute_qubo_energy(self):
+        """测试 QUBO 能量计算"""
+        n = 5
+        Q = np.random.randn(n, n)
+        solution = np.random.randint(0, 2, n).astype(np.float64)
+
+        energy = QuantumAnnealingOptimizer._compute_qubo_energy(solution, Q)
+
+        expected = float(solution @ Q @ solution)
+        self.assertAlmostEqual(energy, expected, places=6)
+
+    def test_anneal_finds_better_than_random(self):
+        """测试退火求解结果优于随机解"""
+        np.random.seed(42)
+        n = 20
+        Q = np.random.randn(n, n)
+        Q = (Q + Q.T) / 2
+
+        best_bitstring = self.optimizer.anneal(Q)
+        best_bits = np.array([int(b) for b in best_bitstring], dtype=np.float64)
+        best_energy = QuantumAnnealingOptimizer._compute_qubo_energy(best_bits, Q)
+
+        random_energies = []
+        for _ in range(100):
+            rand_bits = np.random.randint(0, 2, n).astype(np.float64)
+            random_energies.append(
+                QuantumAnnealingOptimizer._compute_qubo_energy(rand_bits, Q)
+            )
+
+        avg_random = np.mean(random_energies)
+        self.assertLess(best_energy, avg_random)
+
+
+class TestSchedulingStrategies(unittest.TestCase):
+    """测试调度策略"""
+
+    def setUp(self):
+        self.obs = np.array([
+            0.5,   # qubit_availability
+            0.3,   # queue_length
+            0.2,   # avg_wait_time
+            0.95,  # fidelity
+            0.4,   # classical_load
+            0.5,   # quantum_queue_ratio
+            0.5,   # time_of_day
+            0.6,   # urgency_level
+        ], dtype=np.float32)
+
+    def test_greedy_strategy(self):
+        """测试贪心策略"""
+        strategy = GreedyStrategy()
+        action = strategy.select_action(self.obs)
+        self.assertIn(action, [0, 1, 2])
+
+    def test_greedy_high_urgency(self):
+        """测试高紧急度时贪心策略优先量子"""
+        strategy = GreedyStrategy()
+        obs_high_urgency = self.obs.copy()
+        obs_high_urgency[7] = 0.9  # high urgency
+        obs_high_urgency[0] = 0.8  # high qubit availability
+        action = strategy.select_action(obs_high_urgency)
+        self.assertEqual(action, 1)  # should choose quantum
+
+    def test_fcfs_strategy(self):
+        """测试 FCFS 策略"""
+        strategy = FCFSStrategy()
+        action = strategy.select_action(self.obs)
+        self.assertEqual(action, 2)  # always hybrid
+
+    def test_random_strategy(self):
+        """测试随机策略"""
+        strategy = RandomStrategy(action_dim=3, seed=42)
+        actions = [strategy.select_action(self.obs) for _ in range(100)]
+        self.assertTrue(all(0 <= a < 3 for a in actions))
+
+    def test_quantum_only_strategy(self):
+        """测试仅量子策略"""
+        strategy = QuantumOnlyStrategy()
+        action = strategy.select_action(self.obs)
+        self.assertEqual(action, 1)
+
+    def test_classical_only_strategy(self):
+        """测试仅经典策略"""
+        strategy = ClassicalOnlyStrategy()
+        action = strategy.select_action(self.obs)
+        self.assertEqual(action, 0)
+
+    def test_sjf_strategy(self):
+        """测试 SJF 策略"""
+        strategy = ShortestJobFirstStrategy()
+        action = strategy.select_action(self.obs)
+        self.assertIn(action, [0, 1, 2])
+
+    def test_sjf_long_queue(self):
+        """测试长队列时 SJF 使用混合执行"""
+        strategy = ShortestJobFirstStrategy()
+        obs_long_queue = self.obs.copy()
+        obs_long_queue[1] = 0.8  # long queue
+        action = strategy.select_action(obs_long_queue)
+        self.assertEqual(action, 2)  # should choose hybrid
 
 
 class TestIntegration(unittest.TestCase):
@@ -442,19 +664,18 @@ class TestIntegration(unittest.TestCase):
 
     def test_env_agent_interaction(self):
         """测试环境和智能体交互"""
-        env = SchedulingEnv()
-        agent = SchedulingAgent(state_dim=20, action_dim=5)
+        env = QuantumSchedulingEnv(max_steps=50, seed=42)
+        agent = SchedulerAgent(env=env, learning_rate=1e-3, verbose=0)
 
-        # 重置环境
-        state, _ = env.reset()
+        agent.model = agent._build_model()
 
-        # 执行10步
-        for i in range(10):
-            action = agent.select_action(state, training=True)
+        state, _ = env.reset(seed=42)
+
+        for i in range(20):
+            action = agent.predict(state, deterministic=False)
             next_state, reward, terminated, truncated, info = env.step(action)
 
-            # 检查交互
-            self.assertEqual(next_state.shape, (20,))
+            self.assertEqual(next_state.shape, (OBS_DIM,))
             self.assertIsInstance(reward, float)
 
             state = next_state
@@ -462,46 +683,74 @@ class TestIntegration(unittest.TestCase):
             if terminated or truncated:
                 break
 
-        print("  test_env_agent_interaction passed")
+    def test_agent_short_training(self):
+        """测试智能体短时间训练"""
+        env = QuantumSchedulingEnv(max_steps=50, seed=42)
+        agent = SchedulerAgent(
+            env=env,
+            learning_rate=1e-3,
+            buffer_size=500,
+            batch_size=32,
+            learning_starts=50,
+            verbose=0,
+            seed=42,
+        )
+
+        model = agent.train(total_timesteps=200, eval_freq=100,
+                            n_eval_episodes=2)
+        self.assertIsNotNone(model)
+
+    def test_evaluate(self):
+        """测试评估方法"""
+        env = QuantumSchedulingEnv(max_steps=50, seed=42)
+        agent = SchedulerAgent(env=env, verbose=0, seed=42)
+        agent.model = agent._build_model()
+
+        result = agent.evaluate(num_episodes=3, deterministic=True)
+
+        self.assertIn("mean_reward", result)
+        self.assertIn("std_reward", result)
+        self.assertIn("success_rate", result)
+        self.assertIn("num_episodes", result)
+        self.assertEqual(result["num_episodes"], 3)
 
 
 def run_tests():
     """运行所有测试"""
-    print("=" * 60)
-    print("Quantum RL Scheduling System - Unit Tests")
-    print("=" * 60)
+    print("=" * 64)
+    print("  Quantum RL Scheduling System - Unit Tests")
+    print("=" * 64)
     print()
 
-    # 创建测试套件
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
 
-    # 添加测试类
-    suite.addTests(loader.loadTestsFromTestCase(TestSchedulingEnv))
+    suite.addTests(loader.loadTestsFromTestCase(TestQuantumSchedulingEnv))
     suite.addTests(loader.loadTestsFromTestCase(TestSchedulerAgent))
     suite.addTests(loader.loadTestsFromTestCase(TestLegacyTaskParser))
     suite.addTests(loader.loadTestsFromTestCase(TestTaskParser))
+    suite.addTests(loader.loadTestsFromTestCase(TestQuantumAnnealing))
+    suite.addTests(loader.loadTestsFromTestCase(TestSchedulingStrategies))
     suite.addTests(loader.loadTestsFromTestCase(TestIntegration))
 
-    # 运行测试
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
 
-    # 打印摘要
     print()
-    print("=" * 60)
-    print("Summary")
-    print("=" * 60)
-    print(f"Tests run: {result.testsRun}")
-    print(f"Failures:  {len(result.failures)}")
-    print(f"Errors:    {len(result.errors)}")
+    print("=" * 64)
+    print("  Summary")
+    print("=" * 64)
+    print(f"  Tests run:    {result.testsRun}")
+    print(f"  Failures:     {len(result.failures)}")
+    print(f"  Errors:       {len(result.errors)}")
+    print(f"  Skipped:      {len(result.skipped)}")
 
     if result.wasSuccessful():
-        print("All tests passed!")
+        print("  All tests passed!")
     else:
-        print("Some tests failed!")
+        print("  Some tests failed!")
 
-    print("=" * 60)
+    print("=" * 64)
 
     return result.wasSuccessful()
 

@@ -196,10 +196,29 @@ app = FastAPI(title="量子RL调度系统监控界面", version="1.0.0", lifespa
 # 页面路由：返回监控面板 HTML
 # ============================================================
 
+# 获取前端 HTML 文件路径
+import os as _os
+FRONTEND_HTML_PATH = _os.path.join(_os.path.dirname(__file__), "frontend", "index.html")
+
+# 缓存前端 HTML 内容
+_VUE3_HTML_TEMPLATE = None
+
+def _load_vue3_template():
+    """加载 Vue3 前端 HTML 模板"""
+    global _VUE3_HTML_TEMPLATE
+    if _VUE3_HTML_TEMPLATE is None:
+        if _os.path.exists(FRONTEND_HTML_PATH):
+            with open(FRONTEND_HTML_PATH, "r", encoding="utf-8") as f:
+                _VUE3_HTML_TEMPLATE = f.read()
+        else:
+            _VUE3_HTML_TEMPLATE = HTML_TEMPLATE  # 回退到旧的 HTML
+    return _VUE3_HTML_TEMPLATE
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    """返回监控面板 HTML 页面"""
-    return HTMLResponse(content=HTML_TEMPLATE)
+    """返回监控面板 HTML 页面（Vue3 + Echarts 版本）"""
+    return HTMLResponse(content=_load_vue3_template())
 
 
 # ============================================================

@@ -1,0 +1,75 @@
+# =============================================================================
+# Docker 构建忽略文件
+# =============================================================================
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+*.egg
+dist/
+build/
+*.whl
+
+# 虚拟环境
+venv/
+env/
+.venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 测试
+.coverage
+htmlcov/
+.pytest_cache/
+tests/
+
+# 文档
+docs/
+*.md
+!requirements.txt
+
+# 日志和临时文件
+*.log
+logs/*.log
+*.tmp
+temp/
+tmp/
+
+# 本地模型（如果需要持久化，可以使用 volume）
+# models/*.zip
+
+# TensorFlow 检查点
+*.ckpt
+*.h5
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# 环境变量
+.env
+.env.local
+.env.*.local
+
+# Node.js（如果有前端构建）
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

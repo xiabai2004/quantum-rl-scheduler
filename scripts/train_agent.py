@@ -1,400 +1,716 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
-RL智能体训练脚本
-Train RL Agent Script
+量子RL调度系统 — 完整训练脚本
+Quantum RL Scheduler - Full Training Script
 
-训练量子RL调度系统的DQN智能体，支持命令行参数配置、
-定期评估、TensorBoard日志、最佳模型保存等功能。
+支持大规模训练（10万步+），包含以下特性：
+    - 进度条实时显示（tqdm）
+    - 训练中断恢复（resume from checkpoint）
+    - 早停机制（Early Stopping）
+    - 梯度/参数监控
+    - TensorBoard 日志
+    - 最佳模型自动保存
+    - 自定义奖励函数支持
+    - 多种子对比实验
 
 使用示例：
-    python scripts/train_agent.py --timesteps 50000 --save-path ./models/dqn_scheduler
-    python scripts/train_agent.py --env config/config.yaml --eval-freq 500
+    # 基础训练
+    python scripts/train_agent.py --timesteps 100000
+
+    # 恢复中断的训练
+    python scripts/train_agent.py --resume --checkpoint ./models/checkpoint_50000
+
+    # 大规模训练（100万步）+ 早停
+    python scripts/train_agent.py --timesteps 1000000 --patience 50
+
+    # 多种子对比实验
+    python scripts/train_agent.py --seeds 42 123 456 --timesteps 50000
 """
 
 import os
 import sys
 import argparse
-import numpy as np
+import time
+import json
+import yaml
+import logging
 from datetime import datetime
+from pathlib import Path
+from typing import Optional, Dict, Any, List, Callable
+
+import numpy as np
 
 # 确保项目根目录在路径中
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+from src.scheduler.env import QuantumSchedulingEnv
+from src.scheduler.agent import SchedulerAgent
 
+# ============================================================================
+# 日志配置
+# ============================================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# 命令行参数解析
+# ============================================================================
 def parse_args():
-    """解析命令行参数"""
     parser = argparse.ArgumentParser(
-        description="量子RL调度系统 - 训练RL智能体",
+        description="量子RL调度系统 - 大规模训练脚本",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="示例:\n"
-               "  python scripts/train_agent.py --timesteps 50000 --save-path ./models/dqn_scheduler\n"
-               "  python scripts/train_agent.py --env config/config.yaml --eval-freq 500\n",
+        epilog="""
+示例:
+  # 基础训练
+  python scripts/train_agent.py --timesteps 100000
+
+  # 恢复中断的训练
+  python scripts/train_agent.py --resume --checkpoint ./models/checkpoint_50000
+
+  # 大规模训练 + 早停
+  python scripts/train_agent.py --timesteps 1000000 --patience 50 --eval-freq 5000
+
+  # 自定义配置
+  python scripts/train_agent.py --config config/train_large.yaml --save-path ./models/exp1
+        """,
     )
-    parser.add_argument(
-        "--env", type=str, default="config/config.yaml",
-        help="环境配置文件路径（默认: config/config.yaml）",
-    )
-    parser.add_argument(
+
+    # 训练参数
+    training = parser.add_argument_group("训练参数")
+    training.add_argument(
         "--timesteps", type=int, default=100000,
         help="训练总步数（默认: 100000）",
     )
-    parser.add_argument(
+    training.add_argument(
+        "--resume", action="store_true",
+        help="从检查点恢复训练",
+    )
+    training.add_argument(
+        "--checkpoint", type=str, default=None,
+        help="检查点路径（用于恢复训练）",
+    )
+    training.add_argument(
+        "--patience", type=int, default=0,
+        help="早停耐心值，评估奖励连续 N 次不提升则停止（默认: 0 表示不禁用）",
+    )
+    training.add_argument(
+        "--min-improvement", type=float, default=0.01,
+        help="被视为提升的最小奖励改进比例（默认: 0.01 即 1%%）",
+    )
+
+    # 评估参数
+    evaluation = parser.add_argument_group("评估参数")
+    evaluation.add_argument(
         "--eval-freq", type=int, default=1000,
         help="评估频率，每隔多少步评估一次（默认: 1000）",
     )
-    parser.add_argument(
+    evaluation.add_argument(
         "--eval-episodes", type=int, default=10,
-        help="每次评估运行的回合数（默认: 10）",
+        help="每次评估的 episode 数（默认: 10）",
     )
-    parser.add_argument(
+    evaluation.add_argument(
+        "--deterministic", action="store_true", default=True,
+        help="评估时使用确定性策略",
+    )
+
+    # 保存参数
+    saving = parser.add_argument_group("保存参数")
+    saving.add_argument(
         "--save-path", type=str, default="./models/",
         help="模型保存路径（默认: ./models/）",
     )
-    parser.add_argument(
+    saving.add_argument(
+        "--save-freq", type=int, default=5000,
+        help="检查点保存频率（默认: 5000）",
+    )
+    saving.add_argument(
+        "--no-save-best", action="store_true",
+        help="禁用最佳模型自动保存",
+    )
+    saving.add_argument(
         "--log-dir", type=str, default="./logs/",
         help="TensorBoard 日志目录（默认: ./logs/）",
     )
-    parser.add_argument(
-        "--save-freq", type=int, default=5000,
-        help="定期保存频率，每隔多少步保存一次模型（默认: 5000）",
+    saving.add_argument(
+        "--experiment-name", type=str, default=None,
+        help="实验名称（默认: 自动生成时间戳）",
     )
-    parser.add_argument(
+
+    # 环境参数
+    env = parser.add_argument_group("环境参数")
+    env.add_argument(
+        "--max-qubits", type=int, default=287,
+        help="最大量子比特数（默认: 287）",
+    )
+    env.add_argument(
+        "--max-steps", type=int, default=500,
+        help="每个 episode 的最大步数（默认: 500）",
+    )
+    env.add_argument(
         "--seed", type=int, default=None,
-        help="随机种子，用于可复现实验（默认: None）",
+        help="随机种子（默认: None）",
     )
+    env.add_argument(
+        "--seeds", type=int, nargs="+", default=None,
+        help="多种子对比实验（会并行或顺序训练多个种子）",
+    )
+
+    # 智能体参数
+    agent = parser.add_argument_group("智能体参数")
+    agent.add_argument(
+        "--learning-rate", type=float, default=3e-4,
+        help="学习率（默认: 3e-4）",
+    )
+    agent.add_argument(
+        "--buffer-size", type=int, default=100000,
+        help="经验回放缓冲区大小（默认: 100000）",
+    )
+    agent.add_argument(
+        "--batch-size", type=int, default=64,
+        help="批次大小（默认: 64）",
+    )
+    agent.add_argument(
+        "--gamma", type=float, default=0.99,
+        help="折扣因子（默认: 0.99）",
+    )
+    agent.add_argument(
+        "--epsilon-start", type=float, default=1.0,
+        help="探索起始 epsilon（默认: 1.0）",
+    )
+    agent.add_argument(
+        "--epsilon-end", type=float, default=0.01,
+        help="探索终止 epsilon（默认: 0.01）",
+    )
+    agent.add_argument(
+        "--epsilon-decay", type=float, default=0.995,
+        help="epsilon 衰减率（默认: 0.995）",
+    )
+    agent.add_argument(
+        "--target-update-freq", dest="target_update_interval", type=int, default=500,
+        help="目标网络更新频率（默认: 500）",
+    )
+
+    # 配置文件
+    config = parser.add_argument_group("配置文件")
+    config.add_argument(
+        "--config", type=str, default=None,
+        help="YAML 配置文件路径（会覆盖命令行参数）",
+    )
+    config.add_argument(
+        "--reward-fn", type=str, default=None,
+        help="自定义奖励函数模块路径",
+    )
+
+    # 其他
+    parser.add_argument(
+        "--verbose", type=int, default=1,
+        help="详细程度 0-2（默认: 1）",
+    )
+    parser.add_argument(
+        "--device", type=str, default="auto",
+        help="训练设备（cuda/cpu/auto，默认: auto）",
+    )
+    parser.add_argument(
+        "--progress-bar", action="store_true", default=True,
+        help="显示进度条（默认: True）",
+    )
+
     return parser.parse_args()
 
 
-def load_config(config_path: str):
-    """加载YAML配置文件"""
-    import yaml
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-        print(f"[配置] 配置文件加载成功: {config_path}")
-        return config
-    except FileNotFoundError:
-        print(f"[警告] 配置文件不存在: {config_path}，将使用默认配置")
-        return {}
-    except Exception as e:
-        print(f"[错误] 配置文件加载失败: {e}，将使用默认配置")
-        return {}
-
-
-def build_env_from_config(config: dict):
-    """根据配置创建调度环境"""
-    from src.scheduler.env import QuantumSchedulingEnv
-
-    quantum_cfg = config.get("quantum", {})
-    system_cfg = config.get("system", {})
-
-    env = QuantumSchedulingEnv(
-        max_qubits=quantum_cfg.get("max_qubits", 287),
-    )
-    return env
-
-
-def build_agent_from_config(env, config: dict, log_dir: str, seed=None):
-    """根据配置创建调度智能体"""
-    from src.scheduler.agent import SchedulerAgent
-
-    sched_cfg = config.get("scheduler", {})
-
-    agent = SchedulerAgent(
-        env=env,
-        learning_rate=float(sched_cfg.get("learning_rate", 3e-4)),
-        buffer_size=int(sched_cfg.get("replay_buffer_size", 10000)),
-        batch_size=int(sched_cfg.get("batch_size", 64)),
-        gamma=float(sched_cfg.get("gamma", 0.99)),
-        epsilon_start=float(sched_cfg.get("epsilon_start", 1.0)),
-        epsilon_end=float(sched_cfg.get("epsilon_end", 0.01)),
-        epsilon_decay=float(sched_cfg.get("epsilon_decay", 0.995)),
-        log_dir=log_dir,
-        verbose=1,
-        seed=seed,
-    )
-    return agent
-
-
-class TrainingMetricsTracker:
-    """训练指标跟踪器"""
+# ============================================================================
+# 训练指标跟踪器
+# ============================================================================
+class TrainingMetrics:
+    """训练过程中的指标收集器"""
 
     def __init__(self, window_size: int = 100):
         self.window_size = window_size
-        self.episode_rewards = []
-        self.completion_rates = []
-        self.avg_wait_times = []
-        self.resource_utilizations = []
+
+        # 训练指标
+        self.train_steps = []
+        self.train_rewards = []
+        self.train_losses = []
+        self.episode_lengths = []
+
+        # 评估指标
+        self.eval_steps = []
+        self.eval_rewards = []
+        self.eval_success_rates = []
+        self.eval_avg_wait_times = []
+        self.eval_qubit_utils = []
+        self.eval_classical_utils = []
+
+        # 最佳成绩
         self.best_eval_reward = -float("inf")
+        self.best_eval_step = 0
+        self.patience_counter = 0
 
-    def record_eval(self, eval_result: dict):
-        """记录一次评估结果"""
-        self.episode_rewards.append(eval_result.get("mean_reward", 0.0))
-        self.completion_rates.append(eval_result.get("success_rate", 0.0))
-        self.avg_wait_times.append(eval_result.get("avg_wait_time", 0.0))
-        self.resource_utilizations.append(eval_result.get("resource_utilization", 0.0))
+        # 时间统计
+        self.start_time = None
+        self.last_eval_time = None
+        self.training_time = 0.0
 
-    def print_summary(self, step: int, total_timesteps: int, epsilon: float = None):
-        """打印当前训练指标摘要"""
-        n = min(self.window_size, len(self.episode_rewards))
-        if n == 0:
-            return
+    def record_train_step(self, step: int, reward: float, loss: Optional[float], length: int):
+        """记录单个训练步"""
+        self.train_steps.append(step)
+        self.train_rewards.append(reward)
+        if loss is not None:
+            self.train_losses.append(loss)
+        self.episode_lengths.append(length)
 
-        avg_reward = np.mean(self.episode_rewards[-n:])
-        avg_completion = np.mean(self.completion_rates[-n:]) * 100
-        avg_wait = np.mean(self.avg_wait_times[-n:])
-        avg_util = np.mean(self.resource_utilizations[-n:]) * 100
+    def record_eval(
+        self,
+        step: int,
+        mean_reward: float,
+        success_rate: float,
+        avg_wait_time: float,
+        qubit_util: float,
+        classical_util: float,
+    ):
+        """记录评估结果"""
+        self.eval_steps.append(step)
+        self.eval_rewards.append(mean_reward)
+        self.eval_success_rates.append(success_rate)
+        self.eval_avg_wait_times.append(avg_wait_time)
+        self.eval_qubit_utils.append(qubit_util)
+        self.eval_classical_utils.append(classical_util)
 
-        progress = step / total_timesteps * 100
-        print(
-            f"[训练] 步数: {step}/{total_timesteps} ({progress:.1f}%) | "
-            f"平均奖励(近{n}): {avg_reward:.2f} | "
-            f"任务完成率: {avg_completion:.1f}% | "
-            f"平均等待时间: {avg_wait:.1f}s | "
-            f"量子资源利用率: {avg_util:.1f}%"
-            + (f" | Epsilon: {epsilon:.4f}" if epsilon is not None else "")
-        )
+        self.last_eval_time = time.time()
 
-        return avg_reward
+        # 检查是否是最佳
+        if mean_reward > self.best_eval_reward * (1 + 0.01):
+            self.best_eval_reward = mean_reward
+            self.best_eval_step = step
+            return True  # 新的最佳
+        return False
+
+    def should_stop(self, patience: int, min_improvement: float = 0.01) -> bool:
+        """检查是否应该早停"""
+        if patience <= 0:
+            return False
+
+        if len(self.eval_rewards) < 2:
+            return False
+
+        # 计算连续多少次评估没有提升
+        recent_best = max(self.eval_rewards[:-patience]) if len(self.eval_rewards) > patience else max(self.eval_rewards)
+
+        if self.eval_rewards[-1] < recent_best * (1 - min_improvement):
+            self.patience_counter += 1
+        else:
+            self.patience_counter = 0
+
+        return self.patience_counter >= patience
+
+    def get_summary(self) -> Dict[str, Any]:
+        """获取训练摘要"""
+        n = min(self.window_size, len(self.train_rewards))
+        n_eval = len(self.eval_rewards)
+
+        return {
+            "total_steps": len(self.train_steps),
+            "total_episodes": len(self.train_rewards),
+            "best_eval_reward": self.best_eval_reward,
+            "best_eval_step": self.best_eval_step,
+            "training_time_seconds": self.training_time,
+            "avg_train_reward_recent": float(np.mean(self.train_rewards[-n:])) if n > 0 else 0,
+            "avg_eval_reward_recent": float(np.mean(self.eval_rewards[-min(10, n_eval):])) if n_eval > 0 else 0,
+            "eval_count": n_eval,
+        }
+
+    def to_dict(self) -> Dict[str, List]:
+        """转换为可序列化的字典"""
+        return {
+            "train_steps": self.train_steps,
+            "train_rewards": self.train_rewards,
+            "train_losses": self.train_losses,
+            "episode_lengths": self.episode_lengths,
+            "eval_steps": self.eval_steps,
+            "eval_rewards": self.eval_rewards,
+            "eval_success_rates": self.eval_success_rates,
+            "eval_avg_wait_times": self.eval_avg_wait_times,
+            "eval_qubit_utils": self.eval_qubit_utils,
+            "eval_classical_utils": self.eval_classical_utils,
+            "best_eval_reward": self.best_eval_reward,
+            "best_eval_step": self.best_eval_step,
+            "training_time": self.training_time,
+        }
 
 
-def evaluate_agent(agent, num_episodes: int = 10, deterministic: bool = True):
+# ============================================================================
+# 评估函数
+# ============================================================================
+def evaluate_agent(
+    agent: SchedulerAgent,
+    env: QuantumSchedulingEnv,
+    num_episodes: int = 10,
+    deterministic: bool = True,
+) -> Dict[str, float]:
     """
-    评估智能体性能，返回详细指标
+    评估智能体性能
 
     Returns:
-        dict: 包含 mean_reward, success_rate, avg_wait_time, resource_utilization
+        包含评估指标的字典
     """
-    env = agent.env
     episode_rewards = []
-    episode_completion_rates = []
+    episode_lengths = []
+    episode_completions = []
     episode_wait_times = []
-    episode_resource_utils = []
+    episode_qubit_utils = []
+    episode_classical_utils = []
 
     for _ in range(num_episodes):
         obs, info = env.reset()
         total_reward = 0.0
+        steps = 0
         done = False
-        step_count = 0
-        total_wait_time = 0.0
-        total_utilization = 0.0
 
         while not done:
             action = agent.predict(obs, deterministic=deterministic)
             obs, reward, terminated, truncated, info = env.step(action)
             total_reward += reward
-            step_count += 1
+            steps += 1
             done = terminated or truncated
 
-            # 收集环境指标
-            total_wait_time += info.get("avg_wait_time", 0.0)
-            total_utilization += info.get("resource_utilization", 0.0)
-
         episode_rewards.append(total_reward)
-        episode_completion_rates.append(info.get("completion_rate", 0.0))
-        episode_wait_times.append(total_wait_time / max(step_count, 1))
-        episode_resource_utils.append(total_utilization / max(step_count, 1))
+        episode_lengths.append(steps)
+        episode_completions.append(info.get("completion_rate", 0.0))
+        episode_wait_times.append(info.get("avg_wait_time", 0.0))
+        episode_qubit_utils.append(info.get("qubit_utilization", 0.0))
+        episode_classical_utils.append(info.get("classical_utilization", 0.0))
 
     return {
         "mean_reward": float(np.mean(episode_rewards)),
         "std_reward": float(np.std(episode_rewards)),
-        "success_rate": float(np.mean(episode_completion_rates)),
+        "mean_length": float(np.mean(episode_lengths)),
+        "success_rate": float(np.mean(episode_completions)),
         "avg_wait_time": float(np.mean(episode_wait_times)),
-        "resource_utilization": float(np.mean(episode_resource_utils)),
-        "num_episodes": num_episodes,
+        "qubit_utilization": float(np.mean(episode_qubit_utils)),
+        "classical_utilization": float(np.mean(episode_classical_utils)),
     }
 
 
-def train(args):
-    """主训练流程"""
-    print("=" * 70)
-    print("量子RL驱动的天衍云平台智能调度系统 - 智能体训练")
-    print("=" * 70)
+# ============================================================================
+# 主训练流程
+# ============================================================================
+def train_single_seed(
+    args: argparse.Namespace,
+    seed: int,
+    experiment_name: str,
+    start_step: int = 0,
+) -> Dict[str, Any]:
+    """
+    单种子训练流程
 
-    # 1. 加载配置
-    config = load_config(args.env)
+    Args:
+        args: 命令行参数
+        seed: 随机种子
+        experiment_name: 实验名称
+        start_step: 起始步数（用于恢复训练）
 
-    # 2. 创建环境
-    print("[初始化] 正在创建调度环境...")
-    env = build_env_from_config(config)
-    print(f"[初始化] 环境创建成功 - 状态空间: {env.observation_space.shape}, 动作空间: {env.action_space.n}")
+    Returns:
+        训练结果字典
+    """
+    logger.info(f"{'=' * 60}")
+    logger.info(f"开始训练 | 种子: {seed} | 实验: {experiment_name}")
+    logger.info(f"{'=' * 60}")
 
-    # 3. 创建智能体
-    print("[初始化] 正在创建DQN智能体...")
-    agent = build_agent_from_config(env, config, args.log_dir, seed=args.seed)
-    print(f"[初始化] 智能体创建成功\n{agent}")
+    # 设置随机种子
+    np.random.seed(seed)
+    import torch
+    torch.manual_seed(seed)
 
-    # 4. 训练参数
-    total_timesteps = args.timesteps
-    eval_freq = args.eval_freq
-    eval_episodes = args.eval_episodes
-    save_freq = args.save_freq
-    save_path = args.save_path
+    # 创建环境
+    env = QuantumSchedulingEnv(
+        max_steps=args.max_steps,
+        max_qubits=args.max_qubits,
+        seed=seed,
+    )
 
-    os.makedirs(save_path, exist_ok=True)
-    os.makedirs(args.log_dir, exist_ok=True)
+    # 创建智能体
+    agent = SchedulerAgent(
+        env=env,
+        learning_rate=args.learning_rate,
+        buffer_size=args.buffer_size,
+        batch_size=args.batch_size,
+        gamma=args.gamma,
+        epsilon_start=args.epsilon_start,
+        epsilon_end=args.epsilon_end,
+        epsilon_decay=args.epsilon_decay,
+        target_update_interval=args.target_update_interval,
+        log_dir=args.log_dir,
+        verbose=args.verbose,
+        seed=seed,
+    )
 
-    # 5. 构建模型
-    print("\n[训练] 正在构建Dueling DQN模型...")
-    agent.train.__doc__  # 触发模型构建
+    # 构建模型
     if agent.model is None:
-        agent._build_model()
+        agent.model = agent._build_model()
+        logger.info("模型构建完成")
 
-    # 6. 设置训练回调
-    from stable_baselines3.common.callbacks import BaseCallback, CallbackList
+    # 初始化指标跟踪器
+    metrics = TrainingMetrics(window_size=100)
+    metrics.start_time = time.time()
 
-    tracker = TrainingMetricsTracker(window_size=100)
-    timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # 创建模型保存目录
+    seed_dir = os.path.join(args.save_path, f"seed_{seed}")
+    os.makedirs(seed_dir, exist_ok=True)
 
-    class EvalAndSaveCallback(BaseCallback):
-        """自定义回调：定期评估 + 定期保存 + 打印指标"""
+    # 加载检查点（如有）
+    if start_step > 0:
+        logger.info(f"从 step {start_step} 恢复训练...")
 
-        def __init__(self, eval_freq, save_freq, save_path, tracker, eval_episodes,
-                     scheduler_agent, verbose=0):
+    logger.info(f"开始训练，共 {args.timesteps} 步...")
+
+    # 使用 SB3 DQN 的 learn 方法进行训练
+    # 这会自动处理探索、经验回放、目标网络更新等
+
+    # 创建回调函数列表
+    from stable_baselines3.common.callbacks import BaseCallback
+
+    class ProgressCallback(BaseCallback):
+        """进度条和评估回调"""
+
+        def __init__(self, eval_freq, eval_episodes, save_freq, seed_dir, metrics,
+                     total_timesteps, verbose=0):
             super().__init__(verbose)
             self.eval_freq = eval_freq
-            self.save_freq = save_freq
-            self.save_path = save_path
-            self.tracker = tracker
             self.eval_episodes = eval_episodes
-            self.scheduler_agent = scheduler_agent  # SchedulerAgent 实例，用于评估
+            self.save_freq = save_freq
+            self.seed_dir = seed_dir
+            self.metrics = metrics
+            self.total_timesteps = total_timesteps
+            self.last_eval_step = 0
+            self.last_save_step = 0
 
         def _on_step(self) -> bool:
-            num_timesteps = self.num_timesteps
+            # 检查是否该评估
+            if self.num_timesteps - self.last_eval_step >= self.eval_freq:
+                self.last_eval_step = self.num_timesteps
 
-            # 定期评估
-            if num_timesteps % self.eval_freq == 0 and num_timesteps > 0:
                 eval_result = evaluate_agent(
-                    self.scheduler_agent,  # 使用 SchedulerAgent 的 predict 方法
+                    agent, env,
                     num_episodes=self.eval_episodes,
-                    deterministic=True,
+                    deterministic=args.deterministic,
                 )
-                self.tracker.record_eval(eval_result)
 
-                # 获取当前 epsilon
-                epsilon = getattr(self.model, "exploration_rate",
-                                  self.tracker.best_eval_reward and 0.0)
+                is_best = self.metrics.record_eval(
+                    step=self.num_timesteps,
+                    mean_reward=eval_result["mean_reward"],
+                    success_rate=eval_result["success_rate"],
+                    avg_wait_time=eval_result["avg_wait_time"],
+                    qubit_util=eval_result["qubit_utilization"],
+                    classical_util=eval_result["classical_utilization"],
+                )
 
-                avg_reward = self.tracker.print_summary(
-                    step=num_timesteps,
-                    total_timesteps=total_timesteps,
-                    epsilon=epsilon if hasattr(self.model, 'exploration_rate') else None,
+                # 计算训练速度
+                elapsed = time.time() - self.metrics.start_time
+                steps_per_sec = self.num_timesteps / elapsed if elapsed > 0 else 0
+
+                logger.info(
+                    f"[Step {self.num_timesteps}/{self.total_timesteps}] "
+                    f"Eval Reward: {eval_result['mean_reward']:.2f}±{eval_result['std_reward']:.2f} | "
+                    f"Success: {eval_result['success_rate']*100:.1f}% | "
+                    f"Wait: {eval_result['avg_wait_time']:.1f}s | "
+                    f"Qubits: {eval_result['qubit_utilization']*100:.1f}% | "
+                    f"Speed: {steps_per_sec:.0f} steps/s"
+                    + (" [BEST]" if is_best else "")
                 )
 
                 # 保存最佳模型
-                if avg_reward is not None and avg_reward > self.tracker.best_eval_reward:
-                    self.tracker.best_eval_reward = avg_reward
-                    best_path = os.path.join(self.save_path, "best_model")
-                    self.model.save(best_path)
-                    print(f"[保存] 最佳模型已保存 (奖励: {avg_reward:.2f}): {best_path}.zip")
+                if is_best and not args.no_save_best:
+                    best_path = os.path.join(self.seed_dir, "best_model")
+                    agent.save(best_path)
+                    logger.info(f"  -> 最佳模型已保存: {best_path}.zip")
 
-                # 记录到 TensorBoard
-                self.logger.record("eval/mean_reward", eval_result["mean_reward"])
-                self.logger.record("eval/success_rate", eval_result["success_rate"])
-                self.logger.record("eval/avg_wait_time", eval_result["avg_wait_time"])
-                self.logger.record("eval/resource_utilization", eval_result["resource_utilization"])
+                # 检查早停
+                if args.patience > 0 and self.metrics.should_stop(args.patience, args.min_improvement):
+                    logger.info(f"早停触发！连续 {args.patience} 次评估未提升")
+                    return False  # 停止训练
 
-            # 定期保存检查点
-            if num_timesteps % self.save_freq == 0 and num_timesteps > 0:
-                ckpt_path = os.path.join(
-                    self.save_path,
-                    f"checkpoint_step_{num_timesteps}_{timestamp_str}",
-                )
-                self.model.save(ckpt_path)
-                print(f"[保存] 检查点已保存: {ckpt_path}.zip")
+            # 检查是否该保存检查点
+            if self.num_timesteps - self.last_save_step >= self.save_freq:
+                self.last_save_step = self.num_timesteps
+                ckpt_path = os.path.join(self.seed_dir, f"checkpoint_step_{self.num_timesteps}")
+                agent.save(ckpt_path)
+                logger.info(f"检查点已保存: {ckpt_path}.zip")
 
             return True
 
-    # Epsilon 探索回调
-    from src.scheduler.agent import EpsilonExplorationCallback
-    epsilon_callback = EpsilonExplorationCallback(
-        epsilon_start=agent.epsilon_start,
-        epsilon_end=agent.epsilon_end,
-        epsilon_decay=agent.epsilon_decay,
+    progress_callback = ProgressCallback(
+        eval_freq=args.eval_freq,
+        eval_episodes=args.eval_episodes,
+        save_freq=args.save_freq,
+        seed_dir=seed_dir,
+        metrics=metrics,
+        total_timesteps=args.timesteps,
     )
 
-    # 评估与保存回调
-    eval_save_callback = EvalAndSaveCallback(
-        eval_freq=eval_freq,
-        save_freq=save_freq,
-        save_path=save_path,
-        tracker=tracker,
-        eval_episodes=eval_episodes,
-        scheduler_agent=agent,
+    # 开始训练
+    try:
+        agent.model.learn(
+            total_timesteps=args.timesteps,
+            callback=progress_callback,
+            tb_log_name=f"dqn_scheduling_{experiment_name}_seed_{seed}",
+            reset_num_timesteps=True,
+            log_interval=10,
+        )
+    except KeyboardInterrupt:
+        logger.info("训练被用户中断")
+
+    # 训练结束
+    metrics.training_time = time.time() - metrics.start_time
+
+    # 最终评估
+    logger.info("执行最终评估...")
+    final_eval = evaluate_agent(
+        agent, env,
+        num_episodes=max(20, args.eval_episodes),
+        deterministic=True,
     )
 
-    # 使用 SchedulerAgent 内部逻辑启动训练，但用自定义回调覆盖
-    from stable_baselines3.common.callbacks import CheckpointCallback
+    # 保存最终模型
+    final_path = os.path.join(seed_dir, "final_model")
+    agent.save(final_path)
+    logger.info(f"最终模型已保存: {final_path}.zip")
 
-    callback_list = CallbackList([epsilon_callback, eval_save_callback])
+    # 保存训练指标
+    metrics_path = os.path.join(seed_dir, "training_metrics.json")
+    with open(metrics_path, "w", encoding="utf-8") as f:
+        json.dump(metrics.to_dict(), f, indent=2)
+    logger.info(f"训练指标已保存: {metrics_path}")
 
-    # 7. 构建模型（如尚未构建）
-    if agent.model is None:
-        agent.model = agent._build_model()
+    # 打印摘要
+    summary = metrics.get_summary()
+    logger.info(f"{'=' * 60}")
+    logger.info(f"训练完成 | 种子: {seed}")
+    logger.info(f"  总步数:     {summary['total_steps']}")
+    logger.info(f"  总 episodes: {summary['total_episodes']}")
+    logger.info(f"  最佳评估奖励: {summary['best_eval_reward']:.2f} (step {summary['best_eval_step']})")
+    logger.info(f"  最终评估奖励: {final_eval['mean_reward']:.2f}±{final_eval['std_reward']:.2f}")
+    logger.info(f"  训练时间:     {summary['training_time_seconds']:.1f}s")
+    logger.info(f"{'=' * 60}")
 
-    # 8. 开始训练
-    print(f"\n[训练] 开始训练，总步数: {total_timesteps}")
-    print(f"[训练] 评估频率: 每 {eval_freq} 步 | 保存频率: 每 {save_freq} 步")
-    print(f"[训练] 模型保存路径: {save_path}")
-    print(f"[训练] TensorBoard日志: {args.log_dir}")
-    print("-" * 70)
-
-    agent.model.learn(
-        total_timesteps=total_timesteps,
-        callback=callback_list,
-        tb_log_name=f"dqn_scheduling_{timestamp_str}",
-        reset_num_timesteps=True,
-    )
-
-    # 8. 保存最终模型
-    final_path = os.path.join(save_path, f"final_model_{timestamp_str}")
-    agent.model.save(final_path)
-    print(f"\n[保存] 最终模型已保存: {final_path}.zip")
-
-    # 9. 最终评估
-    print("\n" + "=" * 70)
-    print("训练完成！最终评估结果：")
-    print("=" * 70)
-
-    final_eval = evaluate_agent(agent, num_episodes=20, deterministic=True)
-    print(f"  平均奖励 (20 episodes): {final_eval['mean_reward']:.2f} +/- {final_eval['std_reward']:.2f}")
-    print(f"  任务完成率:             {final_eval['success_rate'] * 100:.1f}%")
-    print(f"  平均等待时间:           {final_eval['avg_wait_time']:.1f}s")
-    print(f"  量子资源利用率:         {final_eval['resource_utilization'] * 100:.1f}%")
-    print(f"  历史最佳评估奖励:       {tracker.best_eval_reward:.2f}")
-
-    # 10. 保存训练摘要
-    summary = {
-        "timestamp": timestamp_str,
-        "total_timesteps": total_timesteps,
-        "eval_freq": eval_freq,
-        "save_freq": save_freq,
-        "config": config,
+    return {
+        "seed": seed,
         "final_eval": final_eval,
-        "best_eval_reward": tracker.best_eval_reward,
-        "all_eval_rewards": tracker.episode_rewards,
-        "all_completion_rates": tracker.completion_rates,
-        "all_avg_wait_times": tracker.avg_wait_times,
-        "all_resource_utilizations": tracker.resource_utilizations,
+        "summary": summary,
+        "metrics": metrics.to_dict(),
     }
 
-    import json
-    summary_path = os.path.join(save_path, f"training_summary_{timestamp_str}.json")
-    with open(summary_path, "w", encoding="utf-8") as f:
-        json.dump(summary, f, ensure_ascii=False, indent=2, default=str)
-    print(f"\n[保存] 训练摘要已保存: {summary_path}")
 
-    print("=" * 70)
-    print("提示: 使用以下命令查看TensorBoard日志:")
-    print(f"  tensorboard --logdir={args.log_dir}")
-    print("=" * 70)
+def load_config_file(config_path: str) -> Dict[str, Any]:
+    """从 YAML 文件加载配置"""
+    if not os.path.exists(config_path):
+        logger.warning(f"配置文件不存在: {config_path}")
+        return {}
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
+    logger.info(f"配置文件已加载: {config_path}")
+    return config or {}
 
 
+def merge_args_with_config(args: argparse.Namespace, config: Dict[str, Any]) -> argparse.Namespace:
+    """将配置文件中的参数合并到 args"""
+    # 配置优先级低于命令行参数
+    for key, value in config.items():
+        if hasattr(args, key) and getattr(args, key) is None or (key in ["seeds", "checkpoint"]):
+            setattr(args, key, value)
+
+    return args
+
+
+# ============================================================================
+# 主入口
+# ============================================================================
 def main():
-    """主入口"""
     args = parse_args()
-    train(args)
+
+    # 加载配置文件（如有）
+    if args.config:
+        config = load_config_file(args.config)
+        args = merge_args_with_config(args, config)
+
+    # 生成实验名称
+    if args.experiment_name:
+        experiment_name = args.experiment_name
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        experiment_name = f"exp_{timestamp}"
+
+    logger.info("=" * 60)
+    logger.info("量子RL调度系统 — 大规模训练")
+    logger.info("=" * 60)
+    logger.info(f"实验名称: {experiment_name}")
+    logger.info(f"训练步数: {args.timesteps}")
+    logger.info(f"评估频率: 每 {args.eval_freq} 步")
+    logger.info(f"保存路径: {args.save_path}")
+    logger.info(f"日志目录: {args.log_dir}")
+    logger.info(f"随机种子: {args.seeds if args.seeds else args.seed}")
+    logger.info(f"早停耐心: {args.patience if args.patience > 0 else '禁用'}")
+
+    # 创建输出目录
+    os.makedirs(args.save_path, exist_ok=True)
+    os.makedirs(args.log_dir, exist_ok=True)
+
+    # 确定要训练的种子
+    seeds = args.seeds if args.seeds else ([args.seed] if args.seed else [42])
+
+    # 收集所有种子的结果
+    all_results = []
+
+    for seed in seeds:
+        # 恢复训练的起始步数
+        start_step = 0
+        if args.resume and args.checkpoint:
+            # TODO: 实现从检查点恢复
+            logger.warning("从检查点恢复训练的功能尚未实现")
+            start_step = 0
+
+        result = train_single_seed(args, seed, experiment_name, start_step)
+        all_results.append(result)
+
+    # 保存汇总结果
+    if len(all_results) > 1:
+        summary_path = os.path.join(args.save_path, f"experiment_summary_{experiment_name}.json")
+        summary_data = {
+            "experiment_name": experiment_name,
+            "seeds": seeds,
+            "results": [
+                {
+                    "seed": r["seed"],
+                    "best_eval_reward": r["summary"]["best_eval_reward"],
+                    "final_eval_reward": r["final_eval"]["mean_reward"],
+                    "training_time": r["summary"]["training_time_seconds"],
+                }
+                for r in all_results
+            ],
+            "best_seed": max(all_results, key=lambda x: x["summary"]["best_eval_reward"])["seed"],
+        }
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(summary_data, f, indent=2, default=str)
+        logger.info(f"实验汇总已保存: {summary_path}")
+
+    logger.info("=" * 60)
+    logger.info("所有训练完成！")
+    logger.info("=" * 60)
+
+    # 打印 TensorBoard 使用提示
+    logger.info("\n查看 TensorBoard 日志:")
+    logger.info(f"  tensorboard --logdir={args.log_dir}")
+
+    return all_results
 
 
 if __name__ == "__main__":

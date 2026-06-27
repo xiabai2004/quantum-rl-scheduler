@@ -113,89 +113,186 @@ class QuantumAnnealingOptimizer:
     # ------------------------------------------------------------------
     # 方法 2: network_to_qubo
     # ------------------------------------------------------------------
-    def network_to_qubo(self, weights: List[np.ndarray]) -> np.ndarray:
+    def network_to_qubo(
+        self,
+        weights: List[np.ndarray],
+        gradients: Optional[List[np.ndarray]] = None,
+        td_errors: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
         """
-        将神经网络权重列表映射为 QUBO 矩阵
+        将神经网络权重列表映射为 QUBO 矩阵（优化版 v2）
 
-        映射策略：
-            1. 将每个连续权重 w 量化为 n_bits 位的二值编码（固定点表示）
-            2. 每个 bit 对应 QUBO 中的一个二值变量
-            3. 构造二次目标函数，使得 QUBO 的最优解对应于
-               "让梯度下降目标最小化" 的离散近似
+        改进的映射策略（解决 loss 增加问题）：
+            1. **基于梯度的目标函数**：将梯度信息融入 QUBO，使 QUBO 最小化
+               对应于损失函数下降方向（而非简单的权重编码）
+            2. **权重差编码**：编码权重更新量 Δw = w_new - w_old，
+               而非绝对权重值，确保更新方向与梯度一致
+            3. **L2 正则化约束**：添加权重更新幅度的惩罚项，防止更新过大
+               导致 loss 激增
+            4. **对称二进制编码**：使用有符号数字表示（sign-magnitude），
+               提高编码精度并支持正负更新
+            5. **梯度相关性耦合**：利用梯度的 Hessian 信息构造非对角耦合项
 
-            具体来说：
-            - 对角项 Q[i,i] 编码单个比特的偏好（基于权重大小和符号）
-            - 非对角项 Q[i,j] 编码比特间的耦合关系（基于相邻权重间的梯度相关性）
+        QUBO 目标函数：
+            min_x  g^T Δw(x) + λ * ||Δw(x)||^2
+            其中 Δw(x) 是从二进制变量 x 解码出的权重更新量
+                  g 是梯度向量
+                  λ 是正则化系数
 
         Args:
-            weights: 神经网络权重列表，每个元素是一个 numpy array（对应一层权重）
-                     例如 [W1, b1, W2, b2, ...]
+            weights  : 神经网络权重列表，每个元素是一个 numpy array
+            gradients: 可选，梯度列表（与 weights 形状一致）。
+                       若提供，QUBO 将以梯度下降方向为目标。
+                       若未提供，退化为基于权重大小的编码。
+            td_errors: 可选，TD 误差数组，用于调整各参数的重要性权重。
 
         Returns:
             QUBO 矩阵 Q，形状为 (N, N)，其中 N 为编码后的总比特数
         """
         # ---------- 步骤 1：参数配置 ----------
-        n_bits_per_weight = max(1, self.num_qubits // 8)  # 每个权重编码的比特数
+        n_bits_per_weight = max(1, self.num_qubits // 4)  # 增加比特数提高精度
+        reg_lambda = 0.1  # L2 正则化系数，防止更新过大
 
-        # ---------- 步骤 2：展平所有权重为一维向量 ----------
+        # ---------- 步骤 2：展平所有权重和梯度为一维向量 ----------
         flat_weights = np.concatenate([w.flatten() for w in weights])
         num_weights = flat_weights.size
 
+        # 处理梯度
+        if gradients is not None:
+            flat_gradients = np.concatenate([g.flatten() for g in gradients])
+            grad_abs_max = np.max(np.abs(flat_gradients)) + 1e-8
+            flat_gradients_normalized = flat_gradients / grad_abs_max
+            use_gradient = True
+        else:
+            flat_gradients_normalized = np.zeros_like(flat_weights)
+            use_gradient = False
+
+        # 处理 TD 误差（作为参数重要性权重）
+        if td_errors is not None and len(td_errors) > 0:
+            param_importance = np.ones(num_weights)
+            # 按比例分配重要性（前 30% 输入层权重受 TD 误差影响更大）
+            td_abs = np.mean(np.abs(td_errors))
+            importance_scale = min(td_abs, 2.0)
+            param_importance[:int(num_weights * 0.3)] *= (1.0 + importance_scale)
+        else:
+            param_importance = np.ones(num_weights)
+
         # 总比特数 = 权重数 × 每权重编码比特数
+        # 编码格式：1 bit 符号位 + (n_bits-1) bit 数值位
         total_bits = num_weights * n_bits_per_weight
 
         logger.debug(
-            f"network_to_qubo: {num_weights} 个权重参数, "
-            f"每参数 {n_bits_per_weight} bit, 总计 {total_bits} 个 QUBO 变量"
+            f"network_to_qubo (v2): {num_weights} 个权重参数, "
+            f"每参数 {n_bits_per_weight} bit, 总计 {total_bits} 个 QUBO 变量, "
+            f"梯度信息: {'使用' if use_gradient else '未使用'}"
         )
 
         # ---------- 步骤 3：构造 QUBO 矩阵 ----------
         Q = np.zeros((total_bits, total_bits), dtype=np.float64)
 
-        # 计算权重的全局统计量，用于归一化
-        weight_abs_max = np.max(np.abs(flat_weights)) + 1e-8
+        # 计算权重的全局统计量，用于归一化更新幅度
+        weight_std = np.std(flat_weights) + 1e-8
+        # 最大更新幅度限制为权重标准差的 10%（防止更新过大）
+        max_delta = weight_std * 0.1
 
         for i in range(num_weights):
             w = flat_weights[i]
-            w_normalized = w / weight_abs_max  # 归一化到 [-1, 1]
-
+            imp = param_importance[i]
             base_idx = i * n_bits_per_weight
+
+            # 梯度方向：正梯度表示应该减小权重（负更新），反之亦然
+            if use_gradient:
+                g_norm = flat_gradients_normalized[i]
+                # 目标更新方向：与梯度相反（梯度下降）
+                target_delta_direction = -g_norm
+            else:
+                # 无梯度时，倾向于小幅正则化（向零收缩）
+                target_delta_direction = -np.sign(w) * 0.1
+
+            # 每一位的数值权重（无符号部分）
+            # bit 0: 符号位 (1=负, 0=正)
+            # bit 1..n-1: 数值位，权重为 1/2, 1/4, ...
+            magnitude_bits = n_bits_per_weight - 1
 
             for bit_k in range(n_bits_per_weight):
                 global_idx = base_idx + bit_k
-                bit_significance = 1.0 / (2 ** bit_k)  # 高位权重更大
 
-                # --- 对角项 Q[global_idx, global_idx] ---
-                # 目标：使 QUBO 最小值倾向于编码 "当前权重 + 梯度方向" 的离散近似
-                # 使用 sigmoid 变换将连续权重映射到 [0,1]，然后编码为比特偏好
-                sigmoid_val = 1.0 / (1.0 + math.exp(-w_normalized))
-                # 负号使得 QUBO 最小化时偏好 sigmoid_val 对应的 bit 值
-                Q[global_idx, global_idx] = -(2.0 * sigmoid_val - 1.0) * bit_significance
+                if bit_k == 0:
+                    # 符号位
+                    # 注意：符号位没有单独的对角线性项
+                    # 因为 Δw = (1-2s) * m 中 s 总是与 m 相乘
+                    # 符号位的影响通过与数值位的耦合项体现
+                    Q[global_idx, global_idx] = 0.0
+                else:
+                    # 数值位 (bit_k - 1 是数值位的索引)
+                    mag_idx = bit_k - 1
+                    bit_val = max_delta / (2 ** (mag_idx + 1))  # 1/2, 1/4, 1/8, ...
 
-                # --- 非对角项：同一权重内不同比特间的耦合 ---
-                # 高位比特与低位比特之间需要有适当的耦合，保证编码一致性
-                for bit_l in range(bit_k + 1, n_bits_per_weight):
-                    other_idx = base_idx + bit_l
-                    other_significance = 1.0 / (2 ** bit_l)
-                    # 耦合强度与比特位的权重乘积相关
-                    Q[global_idx, other_idx] = (
-                        -0.1 * w_normalized * bit_significance * other_significance
+                    # 对角项：-t*v_k + λ*v_k²
+                    # t = target_delta_direction (目标更新方向)
+                    # 线性项来自 g*Δw，我们要最小化 loss，所以目标是 -t*Δw
+                    Q[global_idx, global_idx] = (
+                        -target_delta_direction * bit_val * imp
+                        + reg_lambda * bit_val * bit_val
                     )
 
-        # --- 跨权重的非对角项（可选，增加权重间的协调性）---
-        # 对于相邻权重，添加弱耦合项，鼓励权重更新的一致性
-        # 仅处理连续权重对，避免 O(n^2) 复杂度
-        for i in range(min(num_weights - 1, 128)):  # 限制计算量
-            base_i = i * n_bits_per_weight
-            base_j = (i + 1) * n_bits_per_weight
+            # --- 同一权重内比特间的耦合项 ---
+            # 1. 符号位与数值位的耦合：来自 Δw 的符号-数值表示
+            # f = -t*Δw + λ*Δw²
+            #   = -t*(1-2s)*m + λ*m²
+            #   = -t*m + 2t*s*m + λ*m²
+            # 展开 m = Σ b_k v_k 后，s 与 b_k 的交叉项系数为 2t*v_k
+            sign_idx = base_idx
+            for mag_idx in range(magnitude_bits):
+                bit_k = 1 + mag_idx
+                bit_val = max_delta / (2 ** (mag_idx + 1))
+                Q[sign_idx, bit_k] = 2.0 * target_delta_direction * bit_val * imp
+                Q[bit_k, sign_idx] = Q[sign_idx, bit_k]
 
-            # 取第一个比特位的耦合（简化）
-            w_i = flat_weights[i] / weight_abs_max
-            w_j = flat_weights[i + 1] / weight_abs_max
-            coupling = -0.01 * w_i * w_j
+            # 2. 数值位之间的耦合（L2 正则化的二次项）
+            for mk1 in range(magnitude_bits):
+                for mk2 in range(mk1 + 1, magnitude_bits):
+                    b1 = 1 + mk1
+                    b2 = 1 + mk2
+                    val1 = max_delta / (2 ** (mk1 + 1))
+                    val2 = max_delta / (2 ** (mk2 + 1))
+                    # 交叉项来自 L2 正则化: (sum b_i v_i)^2 = sum b_i^2 v_i^2 + 2 sum_{i<j} b_i b_j v_i v_j
+                    coupling = 2.0 * reg_lambda * val1 * val2
+                    Q[b1 + base_idx, b2 + base_idx] = coupling
+                    Q[b2 + base_idx, b1 + base_idx] = coupling
 
-            Q[base_i, base_j] = coupling
-            Q[base_j, base_i] = coupling
+        # --- 跨权重的耦合项（可选，基于 Hessian 近似）---
+        # 对于同一层的相邻权重，添加弱相关耦合
+        # 使用梯度信息的相关性近似 Hessian 非对角元
+        if use_gradient and num_weights > 1:
+            # 仅在同一层内相邻权重之间添加耦合（通过权重形状判断层边界）
+            offset = 0
+            for w_idx, w_layer in enumerate(weights):
+                layer_size = w_layer.size
+                layer_start = offset
+                layer_end = offset + layer_size
+
+                # 在层内，对相邻权重对添加耦合
+                max_pairs = min(layer_size - 1, 64)  # 限制计算量
+                for i in range(max_pairs):
+                    idx_i = layer_start + i
+                    idx_j = layer_start + i + 1
+
+                    g_i = flat_gradients_normalized[idx_i]
+                    g_j = flat_gradients_normalized[idx_j]
+
+                    # 近似 Hessian: 如果两个权重的梯度变化相关，则耦合
+                    # 这里用梯度乘积的符号作为耦合方向
+                    coupling_strength = 0.001 * g_i * g_j * max_delta * max_delta
+
+                    # 只在符号位之间添加耦合（简化）
+                    bit_i = idx_i * n_bits_per_weight
+                    bit_j = idx_j * n_bits_per_weight
+
+                    Q[bit_i, bit_j] += coupling_strength
+                    Q[bit_j, bit_i] += coupling_strength
+
+                offset = layer_end
 
         return Q
 
@@ -246,23 +343,30 @@ class QuantumAnnealingOptimizer:
         self,
         bitstring: str,
         original_shape: List[Tuple[int, ...]],
+        current_weights: Optional[List[np.ndarray]] = None,
     ) -> List[np.ndarray]:
         """
-        将最优比特串解码还原为神经网络权重的形状
+        将最优比特串解码还原为神经网络权重（v2 - 符号-数值编码 + 权重差）
 
         解码策略：
             1. 将比特串按每 n_bits_per_weight 分组
-            2. 每组解码为一个固定点数（映射回 [-1, 1] 区间）
-            3. 重塑为原始权重的形状
+            2. 每组格式：[符号位][数值位...] = [1 bit sign][(n-1) bits magnitude]
+               - 符号位 0 = 正更新，1 = 负更新
+               - 数值位为无符号定点数，编码更新量的大小
+            3. 解码出权重更新量 Δw
+            4. 如果提供了 current_weights，则 w_new = w_old + Δw
+               否则返回 Δw 本身
 
         Args:
             bitstring      : 最优比特串，例如 "10110..."
             original_shape : 原始权重的形状列表，例如 [(128, 64), (64,), ...]
+            current_weights: 可选，当前权重列表。若提供，返回 w_old + Δw；
+                             若未提供，返回 Δw 本身。
 
         Returns:
-            weights: 解码后的权重列表，每个元素形状与 original_shape 对应
+            weights: 解码后的权重列表（或权重更新量列表）
         """
-        n_bits_per_weight = max(1, self.num_qubits // 8)
+        n_bits_per_weight = max(1, self.num_qubits // 4)
 
         # 将比特串转为 bit 数组
         bits = np.array([int(b) for b in bitstring], dtype=np.float64)
@@ -275,31 +379,62 @@ class QuantumAnnealingOptimizer:
         if len(bits) >= num_bits_used:
             bits = bits[:num_bits_used]
         else:
-            # 不足时用 0 填充
             padded = np.zeros(num_bits_used, dtype=np.float64)
             padded[:len(bits)] = bits
             bits = padded
 
-        # 解码每个权重的比特编码为连续值
-        decoded_values = np.zeros(total_params, dtype=np.float64)
+        # 计算当前权重的统计量，用于确定更新幅度
+        if current_weights is not None:
+            flat_current = np.concatenate([w.flatten() for w in current_weights])
+            weight_std = np.std(flat_current) + 1e-8
+            max_delta = weight_std * 0.1
+        else:
+            max_delta = 0.1  # 默认值
+
+        # 解码每个权重的比特编码为连续更新量
+        delta_values = np.zeros(total_params, dtype=np.float64)
+        magnitude_bits = n_bits_per_weight - 1
+
+        # 数值位的最大可能值：sum_{k=0}^{m-1} 1/2^k = 2 - 1/2^{m-1}
+        # 但我们直接用最大值为 1.0（即最高位权重为 1.0，后续位递减）
+        # 这样更直观：数值位直接表示 [0, 1] 之间的数
         for i in range(total_params):
             start = i * n_bits_per_weight
             end = start + n_bits_per_weight
             weight_bits = bits[start:end]
-            # 固定点解码：bit_k 的权重为 1/2^k，值为 sum(bit_k / 2^k)
-            fp_value = 0.0
-            for k in range(n_bits_per_weight):
-                fp_value += weight_bits[k] / (2 ** k)
-            # 映射到 [-1, 1]：先映射到 [0, 1]，再移到 [-1, 1]
-            fp_value = fp_value / (2 ** n_bits_per_weight)  # 归一化到 [0, 1]
-            decoded_values[i] = 2.0 * fp_value - 1.0  # 移到 [-1, 1]
+
+            # 第 0 位是符号位，其余是数值位
+            sign_bit = weight_bits[0]
+            mag_bits = weight_bits[1:]
+
+            # 计算数值部分：直接以 [0, 1] 为范围
+            # 最高位 (mag_bits[0]) 权重为 1/2，次高位 1/4，...
+            # 总和范围是 [0, 1 - 1/2^m] ≈ [0, 1]
+            magnitude = 0.0
+            for k in range(magnitude_bits):
+                if k < len(mag_bits):
+                    magnitude += mag_bits[k] / (2 ** (k + 1))
+
+            # 符号：0 = 正更新，1 = 负更新
+            delta = magnitude * max_delta
+            if sign_bit > 0.5:
+                delta = -delta
+
+            delta_values[i] = delta
+
+        # 计算最终权重
+        if current_weights is not None:
+            flat_current = np.concatenate([w.flatten() for w in current_weights])
+            final_values = flat_current + delta_values
+        else:
+            final_values = delta_values
 
         # 将解码后的值重塑为原始权重形状
         weights = []
         offset = 0
         for shape in original_shape:
             count = int(np.prod(shape))
-            w = decoded_values[offset:offset + count].reshape(shape)
+            w = final_values[offset:offset + count].reshape(shape)
             weights.append(w)
             offset += count
 
@@ -314,24 +449,26 @@ class QuantumAnnealingOptimizer:
         num_iterations: int = 10,
         learning_rate: float = 0.01,
         callback: Optional[Any] = None,
+        replay_buffer: Optional[Any] = None,
     ) -> Any:
         """
-        主优化循环：用量子退火加速策略更新
+        主优化循环：用量子退火加速策略更新（v2 - 梯度引导）
 
-        每次迭代流程：
-            1. 提取 agent 策略网络的当前权重
-            2. 计算当前网络的损失/梯度信息（构造 QUBO 目标）
-            3. 将权重映射为 QUBO 矩阵
-            4. 调用退火器求解最优比特串
-            5. 将比特串解码为权重更新
-            6. 用学习率混合新旧权重，更新网络
+        改进的优化流程（解决 loss 增加问题）：
+            1. 从经验回放缓冲区采样批次数据
+            2. 计算策略网络的梯度（TD 误差反向传播）
+            3. 将梯度信息融入 QUBO 构造，使 QUBO 最小化对应梯度下降方向
+            4. 退火求解最优权重更新量 Δw
+            5. 用学习率缩放更新量，更新网络权重
+            6. 接受准则：只有当 loss 下降时才接受更新（防止 loss 增加）
 
         Args:
             agent         : RL 智能体（需具有 policy_net 属性，为 nn.Module）
             num_iterations: 量子退火优化迭代次数（默认 10）
-            learning_rate : 权重更新学习率（默认 0.01），控制新旧权重的混合比例
+            learning_rate : 权重更新学习率（默认 0.01），控制更新幅度
             callback      : 可选的回调函数，签名为 callback(iteration, loss)
-                            可用于日志记录或可视化
+            replay_buffer : 可选，经验回放缓冲区。若提供，用于计算梯度；
+                            若未提供，退化为基于权重正则化的优化。
 
         Returns:
             agent: 优化后的智能体（原地修改并返回）
@@ -350,61 +487,107 @@ class QuantumAnnealingOptimizer:
             return agent
 
         logger.info(
-            f"开始量子退火策略优化: {num_iterations} 次迭代, "
+            f"开始量子退火策略优化 (v2 - 梯度引导): {num_iterations} 次迭代, "
             f"学习率={learning_rate}, 量子比特数={self.num_qubits}"
         )
 
         best_loss = float("inf")
-        history = []  # 记录每次迭代的损失，用于监控收敛
+        best_weights = None
+        history = []
+
+        # 初始评估
+        initial_loss = self._evaluate_network_quality(policy_net)
+        best_loss = initial_loss
+        initial_weights, initial_shapes = self._extract_weights(policy_net)
+        best_weights = [w.copy() for w in initial_weights]
 
         for iteration in range(num_iterations):
-            # ---- 步骤 1: 提取当前权重及其形状信息 ----
+            # ---- 步骤 1: 提取当前权重 ----
             current_weights, original_shapes = self._extract_weights(policy_net)
-            current_param_count = sum(np.prod(s) for s in original_shapes)
 
-            # ---- 步骤 2: 评估当前网络质量（作为 QUBO 构造的参考）----
-            # 使用权重的 L2 范数和梯度信息的组合作为 QUBO 构造的辅助信息
-            current_loss = self._evaluate_network_quality(policy_net)
+            # ---- 步骤 2: 计算梯度（如果有 replay buffer）----
+            gradients = None
+            td_errors = None
+            current_loss = initial_loss
 
-            # ---- 步骤 3: 映射为 QUBO 矩阵 ----
-            qubo_matrix = self.network_to_qubo(current_weights)
+            if replay_buffer is not None and hasattr(replay_buffer, "sample"):
+                # 尝试从 replay buffer 采样并计算梯度
+                try:
+                    gradients, td_errors, current_loss = self._compute_gradients(
+                        policy_net, replay_buffer, agent
+                    )
+                    logger.debug(f"  梯度计算成功, TD 误差均值={np.mean(np.abs(td_errors)):.4f}")
+                except Exception as e:
+                    logger.warning(f"  梯度计算失败: {e}, 退化为无梯度模式")
+                    gradients = None
+
+            # ---- 步骤 3: 映射为 QUBO 矩阵（带梯度信息）----
+            qubo_matrix = self.network_to_qubo(
+                current_weights,
+                gradients=gradients,
+                td_errors=td_errors,
+            )
 
             # ---- 步骤 4: 退火求解 ----
             best_bitstring = self.anneal(qubo_matrix)
 
-            # ---- 步骤 5: 解码比特串为权重 ----
-            optimized_weights = self.bitstring_to_weights(best_bitstring, original_shapes)
+            # ---- 步骤 5: 解码为权重更新（使用当前权重作为基准）----
+            optimized_weights = self.bitstring_to_weights(
+                best_bitstring,
+                original_shapes,
+                current_weights=current_weights,
+            )
 
-            # ---- 步骤 6: 混合更新权重 ----
-            self._apply_weights(
+            # ---- 步骤 6: 应用权重更新（带接受准则）----
+            # 先保存旧权重，用于回滚
+            old_weights = [w.copy() for w in current_weights]
+
+            # 应用更新
+            self._apply_weights_v2(
                 policy_net,
                 current_weights,
                 optimized_weights,
-                original_shapes,
                 learning_rate=learning_rate,
             )
 
-            # 评估更新后的网络质量
+            # ---- 步骤 7: 评估更新后的 loss，决定是否接受 ----
             new_loss = self._evaluate_network_quality(policy_net)
+            loss_improvement = current_loss - new_loss
 
-            history.append((iteration, current_loss, new_loss))
+            # 接受准则：loss 下降，或上升幅度不超过阈值（早期探索）
+            accept_threshold = 0.01 * current_loss  # 允许 1% 的暂时上升
+            if new_loss <= best_loss or loss_improvement > -accept_threshold:
+                # 接受更新
+                accepted = True
+                if new_loss < best_loss:
+                    best_loss = new_loss
+                    best_weights, _ = self._extract_weights(policy_net)
+            else:
+                # 回滚到旧权重
+                self._set_weights(policy_net, old_weights)
+                accepted = False
+
+            history.append((iteration, current_loss, new_loss, accepted))
 
             logger.info(
                 f"  迭代 {iteration + 1}/{num_iterations}: "
                 f"优化前 loss={current_loss:.6f}, 优化后 loss={new_loss:.6f}, "
-                f"参数数={current_param_count}, QUBO规模={qubo_matrix.shape[0]}"
+                f"{'✅ 接受' if accepted else '❌ 拒绝'}, "
+                f"最佳 loss={best_loss:.6f}"
             )
 
-            if new_loss < best_loss:
-                best_loss = new_loss
-
-            # 调用回调
             if callback is not None:
                 callback(iteration, new_loss)
 
+        # 恢复到最佳权重
+        if best_weights is not None:
+            self._set_weights(policy_net, best_weights)
+            logger.info(f"已恢复到最佳权重 (loss={best_loss:.6f})")
+
         logger.info(
             f"量子退火策略优化完成: 最佳 loss={best_loss:.6f}, "
-            f"共 {num_iterations} 次迭代"
+            f"初始 loss={initial_loss:.6f}, "
+            f"改进: {((initial_loss - best_loss) / max(initial_loss, 1e-8) * 100):.2f}%"
         )
 
         # 如果 agent 有 target_net，同步更新
@@ -484,7 +667,7 @@ class QuantumAnnealingOptimizer:
         learning_rate: float = 0.01,
     ):
         """
-        将优化后的权重应用到网络
+        将优化后的权重应用到网络（旧版本，保留用于向后兼容）
 
         使用线性插值混合新旧权重：
             w_final = (1 - lr) * w_old + lr * w_new
@@ -500,20 +683,147 @@ class QuantumAnnealingOptimizer:
             for param, w_old, w_new, shape in zip(
                 network.parameters(), old_weights, new_weights, shapes
             ):
-                # 确保形状匹配
                 assert w_new.shape == shape, (
                     f"权重形状不匹配: 期望 {shape}, 实际 {w_new.shape}"
                 )
-                # 归一化新权重到与旧权重相同的尺度，防止尺度跳跃
                 old_std = np.std(w_old) + 1e-8
                 new_std = np.std(w_new) + 1e-8
                 w_new_scaled = w_new * (old_std / new_std)
 
-                # 线性插值
                 w_final = (1.0 - learning_rate) * w_old + learning_rate * w_new_scaled
-
-                # 就地更新参数
                 param.copy_(torch.from_numpy(w_final.astype(np.float32)))
+
+    @staticmethod
+    def _apply_weights_v2(
+        network: nn.Module,
+        old_weights: List[np.ndarray],
+        new_weights: List[np.ndarray],
+        learning_rate: float = 0.01,
+    ):
+        """
+        将优化后的权重应用到网络（v2 版本）
+
+        与 v1 的区别：
+        - new_weights 已经是包含当前权重的完整权重（w_old + Δw）
+        - 使用 learning_rate 控制更新步长：w_final = w_old + lr * (w_new - w_old)
+        - 不需要重新缩放，因为 Δw 已经是在正确的尺度上
+
+        Args:
+            network       : PyTorch 神经网络
+            old_weights   : 旧权重列表
+            new_weights   : 量子退火优化后的完整权重列表
+            learning_rate : 学习率，控制更新幅度
+        """
+        with torch.no_grad():
+            for param, w_old, w_new in zip(
+                network.parameters(), old_weights, new_weights
+            ):
+                # 计算更新量 Δw = w_new - w_old
+                delta = w_new - w_old
+
+                # 用学习率缩放更新量
+                w_final = w_old + learning_rate * delta
+
+                param.copy_(torch.from_numpy(w_final.astype(np.float32)))
+
+    @staticmethod
+    def _set_weights(network: nn.Module, weights: List[np.ndarray]):
+        """
+        直接设置网络权重（用于回滚）
+
+        Args:
+            network: PyTorch 神经网络
+            weights: 权重列表
+        """
+        with torch.no_grad():
+            for param, w in zip(network.parameters(), weights):
+                param.copy_(torch.from_numpy(w.astype(np.float32)))
+
+    def _compute_gradients(
+        self,
+        policy_net: nn.Module,
+        replay_buffer: Any,
+        agent: Any,
+        batch_size: int = 64,
+    ) -> Tuple[List[np.ndarray], np.ndarray, float]:
+        """
+        计算策略网络的梯度和 TD 误差
+
+        从经验回放缓冲区采样一批数据，前向传播计算 TD 误差，
+        反向传播得到梯度。
+
+        Args:
+            policy_net   : 策略网络
+            replay_buffer: 经验回放缓冲区
+            agent        : RL 智能体（用于获取 gamma 等参数）
+            batch_size   : 采样批次大小
+
+        Returns:
+            gradients: 梯度列表（与网络参数一一对应）
+            td_errors: TD 误差数组
+            loss     : 标量损失值
+        """
+        import torch.nn.functional as F
+
+        # 尝试从 replay buffer 采样
+        if hasattr(replay_buffer, "sample"):
+            try:
+                batch = replay_buffer.sample(batch_size)
+            except Exception:
+                raise ValueError("Replay buffer 采样失败")
+        else:
+            raise ValueError("Replay buffer 不支持 sample 方法")
+
+        # 解析 batch（兼容不同的 replay buffer 格式）
+        # SB3 的 ReplayBuffer 返回的是 namedtuple 或字典
+        if isinstance(batch, tuple) and len(batch) >= 5:
+            observations = torch.from_numpy(batch[0]).float()
+            actions = torch.from_numpy(batch[1]).long()
+            rewards = torch.from_numpy(batch[2]).float()
+            next_observations = torch.from_numpy(batch[3]).float()
+            dones = torch.from_numpy(batch[4]).float()
+        elif hasattr(batch, "observations"):
+            observations = batch.observations.float()
+            actions = batch.actions.long()
+            rewards = batch.rewards.float()
+            next_observations = batch.next_observations.float()
+            dones = batch.dones.float()
+        else:
+            raise ValueError(f"无法解析 batch 格式: {type(batch)}")
+
+        # 获取 gamma
+        gamma = getattr(agent, "gamma", 0.99)
+
+        # 前向传播
+        policy_net.train()
+        q_values = policy_net(observations)
+        q_value = q_values.gather(1, actions).squeeze(1)
+
+        # 计算目标 Q 值
+        with torch.no_grad():
+            next_q_values = policy_net(next_observations)
+            next_q_value = next_q_values.max(1)[0]
+            target_q = rewards + gamma * next_q_value * (1 - dones)
+
+        # 计算 TD 误差和损失
+        td_errors = q_value - target_q
+        loss = F.mse_loss(q_value, target_q)
+
+        # 反向传播计算梯度
+        policy_net.zero_grad()
+        loss.backward()
+
+        # 提取梯度
+        gradients = []
+        for param in policy_net.parameters():
+            if param.grad is not None:
+                gradients.append(param.grad.detach().cpu().numpy().copy())
+            else:
+                gradients.append(np.zeros_like(param.detach().cpu().numpy()))
+
+        policy_net.eval()
+
+        return gradients, td_errors.detach().cpu().numpy(), float(loss.item())
 
     @staticmethod
     def _matrix_to_qubo_dict(qubo_matrix: np.ndarray) -> dict:

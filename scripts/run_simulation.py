@@ -2,12 +2,14 @@
 仿真测试脚本 — 调度策略对比实验
 Simulation Benchmark for Quantum-Classical Hybrid Task Scheduling Strategies
 
-在没有真实量子硬件的情况下，使用仿真环境对比 5 种调度策略：
+在没有真实量子硬件的情况下，使用仿真环境对比 7 种调度策略：
     A. DQN（训练好的深度 Q 网络）
     B. FCFS（先来先服务）
     C. Random（随机分配）
     D. Quantum-Only（仅量子资源）
     E. Classical-Only（仅经典资源）
+    F. Greedy（贪心调度，基于资源利用率和紧急程度）
+    G. SJF（最短作业优先，基于队列长度动态调整）
 
 评估指标：
     - 平均任务等待时间
@@ -299,6 +301,77 @@ class ClassicalOnlyStrategy(BaseStrategy):
         return 0  # ACTION_CLASSICAL
 
 
+class GreedyStrategy(BaseStrategy):
+    """策略 F：贪心调度策略。
+
+    贪心策略逻辑：
+    1. 如果量子资源充足（可用率 > 30%）且任务是量子类型，优先分配到量子资源
+    2. 如果经典资源负载低（< 70%），分配到经典资源
+    3. 否则使用混合执行
+    4. 同时考虑任务紧急程度：紧急任务优先量子资源
+    """
+
+    name = "Greedy"
+
+    def __init__(self, qubit_threshold: float = 0.3, classical_threshold: float = 0.7):
+        self.qubit_threshold = qubit_threshold
+        self.classical_threshold = classical_threshold
+
+    def select_action(self, obs: np.ndarray) -> int:
+        # 解析观测向量
+        qubit_availability = obs[0]    # 量子比特可用率
+        classical_load = obs[4]        # 经典资源负载
+        urgency = obs[7]              # 任务紧急程度
+
+        # 贪心决策逻辑
+        # 1. 紧急任务 + 量子资源充足 → 量子资源
+        if urgency > 0.7 and qubit_availability > self.qubit_threshold:
+            return 1  # ACTION_QUANTUM
+
+        # 2. 量子资源充足 + 经典资源负载高 → 量子资源
+        if qubit_availability > self.qubit_threshold and classical_load > self.classical_threshold:
+            return 1  # ACTION_QUANTUM
+
+        # 3. 经典资源负载低 + 量子资源紧张 → 经典资源
+        if classical_load < self.classical_threshold and qubit_availability <= self.qubit_threshold:
+            return 0  # ACTION_CLASSICAL
+
+        # 4. 默认使用混合执行（最通用）
+        return 2  # ACTION_HYBRID
+
+
+class ShortestJobFirstStrategy(BaseStrategy):
+    """策略 G：最短作业优先（SJF）。
+
+    倾向于将任务分配到执行速度更快的资源：
+    - 量子任务在量子资源上执行更快
+    - 经典任务在经典资源上执行更快
+    - 通用任务根据当前负载选择
+    """
+
+    name = "SJF"
+
+    def select_action(self, obs: np.ndarray) -> int:
+        qubit_availability = obs[0]
+        classical_load = obs[4]
+        queue_length = obs[1]
+
+        # 队列很长时，用混合执行提高吞吐量
+        if queue_length > 0.6:
+            return 2  # ACTION_HYBRID
+
+        # 量子资源充足时优先量子
+        if qubit_availability > 0.5:
+            return 1  # ACTION_QUANTUM
+
+        # 经典资源空闲时用经典
+        if classical_load < 0.5:
+            return 0  # ACTION_CLASSICAL
+
+        # 否则混合
+        return 2  # ACTION_HYBRID
+
+
 # ---------------------------------------------------------------------------
 # 单策略仿真运行
 # ---------------------------------------------------------------------------
@@ -383,7 +456,7 @@ def plot_comparison(results: Dict[str, Dict[str, float]], output_path: str):
     fig, axes = plt.subplots(1, 5, figsize=(25, 5))
     fig.suptitle("调度策略对比实验", fontsize=16, fontweight="bold", y=1.02)
 
-    colors = ["#2196F3", "#4CAF50", "#FF9800", "#9C27B0", "#F44336"]
+    colors = ["#2196F3", "#4CAF50", "#FF9800", "#9C27B0", "#F44336", "#00BCD4", "#8BC34A"]
 
     for ax_idx, (metric_key, metric_label) in enumerate(metrics):
         ax = axes[ax_idx]
@@ -502,6 +575,12 @@ def run_simulation(
 
     # 策略 E：仅经典
     strategies.append(ClassicalOnlyStrategy())
+
+    # 策略 F：贪心
+    strategies.append(GreedyStrategy())
+
+    # 策略 G：最短作业优先
+    strategies.append(ShortestJobFirstStrategy())
 
     # ---- 逐策略运行仿真 ----
     results: Dict[str, Dict[str, float]] = {}
