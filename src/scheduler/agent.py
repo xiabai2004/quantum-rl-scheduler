@@ -37,6 +37,10 @@ from stable_baselines3.common.callbacks import (
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.buffers import ReplayBuffer
 from stable_baselines3.common.utils import get_device
+from stable_baselines3.common.torch_layers import (
+    BaseFeaturesExtractor,
+    create_mlp,
+)
 import gymnasium as gym
 from gymnasium import spaces
 import torch
@@ -46,83 +50,70 @@ import torch as th
 
 
 # ---------------------------------------------------------------------------
-# 自定义策略网络：Dueling DQN
+# 自定义策略网络：Dueling DQN（兼容 SB3 2.0+）
 # ---------------------------------------------------------------------------
 
 class DuelingQNetwork(QNetwork):
     """
-    Dueling DQN 策略网络
+    Dueling DQN 策略网络（兼容 Stable-Baselines3 2.0+）
 
     相比标准 DQN，Dueling 架构将 Q(s,a) 拆分为：
         - 状态价值函数 V(s)：衡量当前状态的总体价值
         - 优势函数 A(s,a)：衡量在当前状态下选择某动作的相对优劣
     最终 Q 值：Q(s,a) = V(s) + A(s,a) - mean(A(s,a))
 
-    这种架构在不影响最优策略学习的前提下，可以更高效地评估
-    不太重要的动作，从而提升探索效率和训练稳定性。
-
     网络结构：
         - 输入层：observation_shape (默认 8)
-        - 共享特征层：8 -> 128 -> 64
+        - 共享特征层：features_dim -> 128 -> 64
         - 价值分支 V(s)：64 -> 1
         - 优势分支 A(s,a)：64 -> n_actions (默认 3)
-        - 输出：Q(s,a) = V(s) + A(s,a) - mean(A(s,a))
     """
 
     def __init__(
         self,
         observation_space: spaces.Space,
-        action_space: spaces.Space,
-        net_arch: Optional[list] = None,
-        features_extractor: Optional[nn.Module] = None,
-        features_extractor_class: Optional[type] = None,
+        action_space: spaces.Discrete,
+        features_extractor: BaseFeaturesExtractor,
+        features_dim: int,
+        net_arch: list[int] | None = None,
+        activation_fn: type[nn.Module] = nn.ReLU,
         normalize_images: bool = True,
-        optimizer_class: type = th.optim.Adam,
-        optimizer_kwargs: Optional[Dict[str, Any]] = None,
-    ):
+    ) -> None:
         # 默认隐藏层 [128, 64]
         if net_arch is None:
             net_arch = [128, 64]
 
+        # 调用 QNetwork.__init__，它会自动创建 self.q_net
         super().__init__(
             observation_space=observation_space,
             action_space=action_space,
-            net_arch=net_arch,
             features_extractor=features_extractor,
-            features_extractor_class=features_extractor_class,
+            features_dim=features_dim,
+            net_arch=net_arch,
+            activation_fn=activation_fn,
             normalize_images=normalize_images,
-            optimizer_class=optimizer_class,
-            optimizer_kwargs=optimizer_kwargs,
         )
 
-    def _build(self, last_layer_dim: int, action_dim: int) -> None:
-        """
-        构建 Dueling 架构：共享特征层 + 价值分支 + 优势分支
+        # 用 Dueling 架构替换 QNetwork 创建的标准 q_net
+        action_dim = int(self.action_space.n)
+        shared_output_dim = self.net_arch[-1] if self.net_arch else features_dim
 
-        Args:
-            last_layer_dim: 共享特征层最后一维输出
-            action_dim: 动作空间维度
-        """
-        # 根据实际 net_arch 获取最后一层隐藏维度
-        # net_arch 形如 [128, 64]，共享层的最后一个输出维度
-        shared_output_dim = self.net_arch[-1] if self.net_arch else last_layer_dim
-
-        self.q_net = nn.Sequential(
-            nn.Linear(last_layer_dim, shared_output_dim),
-            nn.ReLU(),
-        )
+        # 共享特征层（提取高层表示）
+        self.q_net = nn.Sequential(*create_mlp(
+            features_dim, shared_output_dim, self.net_arch[:-1], self.activation_fn
+        ))
 
         # 价值分支 V(s)：估计状态价值
         self.value_stream = nn.Sequential(
             nn.Linear(shared_output_dim, shared_output_dim // 2),
-            nn.ReLU(),
+            self.activation_fn(),
             nn.Linear(shared_output_dim // 2, 1),
         )
 
         # 优势分支 A(s,a)：估计每个动作的相对优势
         self.advantage_stream = nn.Sequential(
             nn.Linear(shared_output_dim, shared_output_dim // 2),
-            nn.ReLU(),
+            self.activation_fn(),
             nn.Linear(shared_output_dim // 2, action_dim),
         )
 
@@ -136,12 +127,12 @@ class DuelingQNetwork(QNetwork):
         Returns:
             Q 值张量，形状为 (batch_size, action_dim)
         """
-        # 提取共享特征
-        features = self.extract_features(obs)
+        # 提取特征（SB3 2.0+ 需要传入 features_extractor）
+        features = self.extract_features(obs, self.features_extractor)
         # 通过共享层
         shared = self.q_net(features)
         # 计算状态价值和动作优势
-        value = self.value_stream(shared)        # (batch, 1)
+        value = self.value_stream(shared)          # (batch, 1)
         advantage = self.advantage_stream(shared)  # (batch, action_dim)
         # Q(s,a) = V(s) + A(s,a) - mean(A(s,a))
         q_values = value + advantage - advantage.mean(dim=-1, keepdim=True)
@@ -348,29 +339,39 @@ class SchedulerAgent:
 
     def _replace_with_dueling(self, model: DQN) -> None:
         """
-        将标准 Q 网络替换为 Dueling Q 网络
+        将标准 Q 网络替换为 Dueling Q 网络（SB3 2.0+ 兼容）
 
-        保留原有权重初始化策略，仅替换网络结构为 Dueling 架构，
-        使模型在训练中能更好地区分状态价值和动作优势。
+        从现有策略网络中提取 features_extractor 和 features_dim，
+        然后创建 DuelingQNetwork 替换 q_net 和 q_net_target。
 
         Args:
             model: SB3 DQN 模型实例
         """
-        obs_dim = self.observation_space.shape[0]  # 输入维度（默认 8）
-        action_dim = self.action_space.n            # 输出维度（默认 3）
-
-        # 获取设备
         device = get_device(model.device)
+
+        # 复用现有策略的 features_extractor 和维度信息
+        old_q_net = model.policy.q_net
+        features_extractor = old_q_net.features_extractor
+        features_dim = old_q_net.features_dim
 
         # 创建 Dueling Q 网络
         dueling_net = DuelingQNetwork(
             observation_space=self.observation_space,
             action_space=self.action_space,
+            features_extractor=features_extractor,
+            features_dim=features_dim,
             net_arch=self.NET_ARCH,
         ).to(device)
 
-        # 替换模型中的 q_net
+        # 替换策略网络中的 q_net 和 q_net_target
         model.policy.q_net = dueling_net
+        model.policy.q_net_target = DuelingQNetwork(
+            observation_space=self.observation_space,
+            action_space=self.action_space,
+            features_extractor=features_extractor,
+            features_dim=features_dim,
+            net_arch=self.NET_ARCH,
+        ).to(device)
 
     def train(
         self,
@@ -622,10 +623,17 @@ class SchedulerAgent:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    from src.scheduler.env import SchedulingEnv
+    import sys
+    import os
+
+    _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if str(_PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PROJECT_ROOT))
+
+    from src.scheduler.env import QuantumSchedulingEnv
 
     # 创建环境
-    env = SchedulingEnv()
+    env = QuantumSchedulingEnv()
 
     # 创建智能体
     agent = SchedulerAgent(
