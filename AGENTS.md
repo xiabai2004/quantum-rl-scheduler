@@ -205,24 +205,25 @@ metrics = MetricsCalculator()
 ## 8. 当前开发进度
 
 ### 已就绪
-| 模块 | 文件 | 实际行数 | 验证状态 |
-|------|------|---------|---------|
-| Mock API | mock_client.py | 510 | ✅ 已测试 |
-| API 客户端 | tianyan_client.py | 574 | ✅ Mock 委托已实现 |
-| 任务解析器 | parser.py | 816 | ⚠️ 待验证 |
-| 调度环境 | env.py | 720 | ⚠️ 待验证 |
-| RL 智能体 | agent.py | 592 | ⚠️ 待验证 |
-| 量子退火 | annealing.py | 682 | ⚠️ 待验证 |
-| Web 界面 | app.py | 1109 | ⚠️ 待验证 |
-| 工具函数 | helpers.py | 285 | ⚠️ 待验证 |
-| 训练脚本 | train_agent.py | — | ⚠️ 待验证 |
-| 仿真脚本 | run_simulation.py | — | ⚠️ 待验证 |
-| 快速训练 | quick_train.py | 63 | ✅ 已创建 |
+| 模块 | 文件 | 实际行数 | 验证状态 | 备注 |
+|------|------|---------|---------|------|
+| Mock API | mock_client.py | 510 | ✅ 已测试 | |
+| API 客户端 | tianyan_client.py | 574 | ✅ Mock 委托已实现 | |
+| 任务解析器 | parser.py | 816 | ✅ 已验证 | TaskParser + Builder + Legacy |
+| 调度环境 | env.py | 720 | ✅ 已验证 | Gymnasium 接口完整 |
+| RL 智能体 | agent.py | 592 | ✅ 已验证 | Dueling DQN 架构 |
+| 量子退火 | annealing.py | 682 | ✅ 已验证 | QUBO映射 + numpy仿真 |
+| Web 界面 | app.py | 1109 | ✅ 已验证 | FastAPI + WebSocket |
+| 快速训练 | quick_train.py | 63 | ✅ 已验证 | 端到端训练通过 |
+| 工具函数 | helpers.py | 285 | ✅ 已验证 | |
+| 训练脚本 | train_agent.py | — | ⚠️ 待验证 | |
+| 仿真脚本 | run_simulation.py | — | ⚠️ 待验证 | |
 
 ### 待紧急处理
 - [ ] **发送平台申请邮件**（截止 6/30）→ 收件人 `saiyuan@chinatelecom.cn`
-- [ ] 端到端训练验证（5000步 DQN）
+- [x] 端到端训练验证（5000步 DQN）✅ 已完成
 - [ ] 仿真对比测试（RL vs 贪心 vs FIFO）
+- [ ] 单元测试补充
 
 
 ## 9. 团队信息
@@ -253,8 +254,8 @@ metrics = MetricsCalculator()
 1. **不要改 `config/config.yaml` 的 `mock_mode: true`**，除非获得平台权限
 2. **每次修改 Python 文件后记得更新 `requirements.txt`**（如有新依赖）
 3. **所有路径使用相对于项目根目录的相对路径**
-4. **TRAE 的 Python 环境**：`D:\tools\Python 3.12.9\python.exe`
-5. **运行命令始终在项目根目录**：`C:\Users\HZR\Desktop\揭榜挂帅擂台赛\quantum-rl-scheduler`
+4. **TRAE 的 Python 环境**：`D:\\tools\\Python 3.12.9\\python.exe`
+5. **运行命令始终在项目根目录**：`C:\\Users\\HZR\\Desktop\\揭榜挂帅擂台赛\\quantum-rl-scheduler`
 6. **GitHub 仓库为 Private**，比赛结束前不公开
 7. **不要删除 docs/ 下的任何指南文件**
 
