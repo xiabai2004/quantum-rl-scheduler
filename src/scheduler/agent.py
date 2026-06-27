@@ -563,16 +563,38 @@ class SchedulerAgent:
         Args:
             path: 模型文件路径（SB3 会自动处理 .zip 扩展名）
         """
-        # SB3 的 DQN.load 会自动处理路径和设备
-        self.model = DQN.load(
-            path,
+        from stable_baselines3.common.save_util import load_from_zip_file
+        data, params, _ = load_from_zip_file(path, device="cpu")
+        
+        self.model = DQN(
+            policy="MlpPolicy",
             env=self.env,
-            custom_objects={
-                "policy_kwargs": {"net_arch": self.NET_ARCH},
-            },
+            learning_rate=self.learning_rate,
+            buffer_size=self.buffer_size,
+            batch_size=self.batch_size,
+            gamma=self.gamma,
+            verbose=self.verbose,
+            policy_kwargs={"net_arch": self.NET_ARCH},
         )
-        # 加载后替换为 Dueling 网络
-        self._replace_with_dueling(self.model)
+        
+        if "policy" in params:
+            policy_state = params["policy"]
+            dueling_keys = [k for k in policy_state.keys() if "value_stream" in k or "advantage_stream" in k]
+            if dueling_keys:
+                self._replace_with_dueling(self.model)
+                q_net_state = {}
+                q_net_target_state = {}
+                for k, v in policy_state.items():
+                    if k.startswith("q_net."):
+                        q_net_state[k.replace("q_net.", "")] = v
+                    elif k.startswith("q_net_target."):
+                        q_net_target_state[k.replace("q_net_target.", "")] = v
+                self.model.policy.q_net.load_state_dict(q_net_state, strict=False)
+                self.model.policy.q_net_target.load_state_dict(q_net_target_state, strict=False)
+            else:
+                self.model.set_parameters(params, exact_match=True, device=self.model.device)
+        else:
+            self.model.set_parameters(params, exact_match=True, device=self.model.device)
         print(f"[SchedulerAgent] 模型已从 {path} 加载")
 
     def get_config(self) -> Dict[str, Any]:

@@ -41,6 +41,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from src.scheduler.agent import DuelingQNetwork
+
 
 # ---------------------------------------------------------------------------
 # 工具函数
@@ -547,7 +549,10 @@ def run_simulation(
     if model_path and os.path.isfile(model_path):
         print(f"[DQN] 加载已训练模型: {model_path}")
         dqn_env = QuantumSchedulingEnv(**base_env_kwargs)
-        dqn_model = DQN.load(model_path, env=dqn_env)
+        from src.scheduler.agent import SchedulerAgent
+        agent = SchedulerAgent(env=dqn_env)
+        agent.load(model_path)
+        dqn_model = agent.model
     else:
         print("[DQN] 未提供模型路径，使用未训练的 DQN（用于演示）")
         dqn_env = QuantumSchedulingEnv(**base_env_kwargs)
