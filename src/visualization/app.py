@@ -356,7 +356,19 @@ def _get_ppo_model():
             from stable_baselines3 import PPO
 
             _ppo_env = QuantumSchedulingEnv(max_qubits=20, seed=42)
-            model_path = os.path.join(_PROJECT_ROOT, "models", "ppo_seed_42", "ppo_model.zip")
+            model_path = os.path.join(_PROJECT_ROOT, "models", "ppo_seed_42_v4", "best_model.zip")
+
+            if not os.path.exists(model_path):
+                # 自动发现：在 models/ 下找任意 ppo 开头的目录中的 best_model.zip
+                models_dir = os.path.join(_PROJECT_ROOT, "models")
+                for root, dirs, files in os.walk(models_dir):
+                    if "ppo" in os.path.basename(root).lower():
+                        for f in files:
+                            if f.endswith(".zip"):
+                                model_path = os.path.join(root, f)
+                                break
+                        if os.path.exists(model_path):
+                            break
 
             if os.path.exists(model_path):
                 _ppo_model = PPO.load(model_path, env=_ppo_env)
