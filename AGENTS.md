@@ -10,8 +10,8 @@
 
 **作品名称**：量子RL驱动的天衍云平台智能调度系统  
 **所属比赛**：2026年"揭榜挂帅"擂台赛 — 榜题"量子AI双向赋能的研究与应用探索"  
-**主办方**：共青团中央 / 中国电信发榜 / 中电信量子执行  
-**团队人数**：10人（含负责人）  
+**主办方**：共青团中央主办 / 中国电信发榜 / 中电信量子执行  
+**团队人数**：8人（含负责人）  
 **负责人**：瑞哥（GitHub: xiabai2004）  
 
 **核心创新—双向赋能**：
@@ -20,6 +20,10 @@
 - 量化目标：资源利用率提升 ≥30%，平均等待时间降低 ≥40%
 
 **目标平台**：天衍云平台真机"天衍-287"（祖冲之三号同款超导量子计算机）
+
+**赛事奖励**：¥26.5万现金 + 价值超¥200万的真机机时  
+**官方邮箱**：saiyuan@chinatelecom.cn（平台申请邮件）  
+**仓库地址**：https://github.com/xiabai2004/quantum-rl-scheduler（Private）
 
 
 ## 2. 关键时间节点
@@ -61,38 +65,46 @@ quantum-rl-scheduler/
 ├── .env.example                  # 环境变量模板
 ├── .gitignore
 ├── CONTRIBUTING.md               # 贡献指南
+├── LICENSE                       # 许可证
+├── .trae/
+│   └── instructions.md           # TRAE Agent 指令文件
+├── githooks/
+│   ├── commit-msg                # Commit 格式检查 hook
+│   └── pre-push                  # 主分支保护 hook
 │
 ├── config/
+│   ├── .env.example              # 环境变量模板
 │   └── config.yaml               # 系统配置（mock_mode: true 表示 Mock 模式）
 │
 ├── src/
+│   ├── __init__.py
 │   ├── scheduler/                # 调度引擎（核心模块）
-│   │   ├── __init__.py           # SchedulerAgent, QuantumSchedulingEnv, Task 等
-│   │   ├── parser.py             # 量化任务解析（867行）
-│   │   ├── env.py                # Gymnasium 调度环境（845行）
-│   │   └── agent.py              # Dueling DQN 智能体（669行）
+│   │   ├── __init__.py           # SchedulerAgent, QuantumSchedulingEnv, Task 等导出
+│   │   ├── parser.py             # 量化任务解析（816行）
+│   │   ├── env.py                # Gymnasium 调度环境（720行）
+│   │   └── agent.py              # Dueling DQN 智能体（592行）
 │   │
 │   ├── api/
-│   │   ├── __init__.py           # 工厂函数 create_tianyan_client()
-│   │   ├── tianyan_client.py     # 天衍云 API 客户端（Mock/真实 自动切换）
-│   │   └── mock_client.py        # Mock API 客户端（831行）
+│   │   ├── __init__.py           # 工厂函数 get_client() / create_tianyan_client()
+│   │   ├── tianyan_client.py     # 天衍云 API 客户端（574行）
+│   │   └── mock_client.py        # Mock API 客户端（510行）
 │   │
 │   ├── quantum/
 │   │   ├── __init__.py
-│   │   └── annealing.py          # 量子退火优化器（766行）
+│   │   └── annealing.py          # 量子退火优化器（682行）
 │   │
 │   ├── visualization/
 │   │   ├── __init__.py
-│   │   └── app.py               # FastAPI Web 监控界面（1145行）
+│   │   └── app.py               # FastAPI Web 监控界面（1109行）
 │   │
 │   └── utils/
 │       ├── __init__.py
-│       └── helpers.py
+│       └── helpers.py            # 工具函数（285行）
 │
 ├── scripts/
-│   ├── quick_train.py            # 快速训练验证（5000步）★ 新增
-│   ├── train_agent.py            # 完整训练脚本（401行）
-│   ├── run_simulation.py         # 仿真对比脚本（641行）
+│   ├── quick_train.py            # 快速训练验证（63行）★ 新增
+│   ├── train_agent.py            # 完整训练脚本
+│   ├── run_simulation.py         # 仿真对比脚本
 │   ├── test_mock_api.py          # Mock API 测试
 │   └── install-hooks.sh          # Git Hooks 安装脚本
 │
@@ -103,28 +115,33 @@ quantum-rl-scheduler/
 │   ├── 新人上手指南.md            # 团队 onboarding
 │   ├── Git工作流.md               # 分支管理规范
 │   ├── 团队分工.md                # 角色职责
-│   └── 开发计划.md               # 详细时间线
+│   ├── 开发计划.md               # 详细时间线
+│   └── 项目记忆_给TRAE.md         # TRAE 专用记忆文件
 │
 └── .github/
     ├── PULL_REQUEST_TEMPLATE.md
     └── ISSUE_TEMPLATE/
+        ├── bug.md
+        └── task.md
 ```
 
-**总核心代码量**：约 5,500 行 Python（不含测试和文档）
+**总核心代码量**：约 4,788 行 Python（不含测试和文档）
 
 
 ## 5. 技术栈
 
 | 层级 | 技术 | 版本 | 用途 |
 |------|------|------|------|
-| 语言 | Python | 3.12+ (TRAE 用 3.12.9) | 全部 |
-| RL | Stable-Baselines3 | 2.9.0 | DQN 算法 |
-| RL | Gymnasium | 1.3.0 | 环境封装 |
-| DL | PyTorch | 2.12.0 | 神经网络 |
+| 语言 | Python | ≥3.10（TRAE 使用 3.12.9） | 全部 |
+| RL | Stable-Baselines3 | ≥2.0.0 | DQN 算法 |
+| RL | Gymnasium | ≥0.28.0 | 环境封装 |
+| DL | PyTorch | ≥2.0.0 | 神经网络 |
 | 量子 | Qiskit / PennyLane | ≥1.0 | 量子电路仿真 |
+| 量子 | D-Wave Ocean SDK | 可选 | 量子退火（dimod/neal） |
 | Web | FastAPI + Uvicorn | ≥0.104 | 监控界面 |
 | 前端 | Vue3 + Echarts | — | 监控面板 |
 | 配置 | PyYAML + python-dotenv | ≥6.0 | 配置管理 |
+| 日志 | Loguru | ≥0.7.0 | 日志框架 |
 
 
 ## 6. 开发模式
@@ -143,26 +160,34 @@ from src.scheduler.parser import TaskParser, Task, TaskBuilder
 parser = TaskParser()
 task = parser.parse_qasm(qasm_string, priority=5)
 
-# 调度环境
+# 调度环境（8维状态空间，Discrete(3)动作空间）
 from src.scheduler.env import QuantumSchedulingEnv
 env = QuantumSchedulingEnv(max_qubits=20)
 obs, _ = env.reset()
 obs, reward, terminated, truncated, info = env.step(action)
 
-# RL 智能体
+# RL 智能体（Dueling DQN）
 from src.scheduler.agent import SchedulerAgent
-agent = SchedulerAgent(env)
-agent.train(total_timesteps=5000, save_path="./models")
+agent = SchedulerAgent(env, learning_rate=1e-4, batch_size=32)
+model = agent.train(total_timesteps=5000, eval_freq=500, log_dir="./logs")
+agent.save("./models/model")
+eval_result = agent.evaluate(num_episodes=5)
 
-# Mock API
-from src.api.tianyan_client import TianyanClient
-client = TianyanClient()  # 自动选择 Mock/真实模式
+# API 客户端（自动选择 Mock/真实模式）
+from src.api import get_client
+client = get_client(mock_mode=True)  # 或 get_client() 自动检测
 task_id = client.submit_quantum_task(circuit_qasm=qasm, shots=1024)
 
-# 量子退火
+# 量子退火（QUBO 映射 + 求解）
 from src.quantum.annealing import QuantumAnnealingOptimizer
-opt = QuantumAnnealingOptimizer()
+opt = QuantumAnnealingOptimizer(simulation_mode=True)
 result = opt.solve_qubo(Q_matrix)
+
+# 工具函数
+from src.utils import setup_logging, load_config, MetricsCalculator
+setup_logging()
+config = load_config()
+metrics = MetricsCalculator()
 ```
 
 
@@ -180,17 +205,18 @@ result = opt.solve_qubo(Q_matrix)
 ## 8. 当前开发进度
 
 ### 已就绪
-| 模块 | 文件 | 行数 | 验证状态 |
-|------|------|------|---------|
-| Mock API | mock_client.py | 831 | ✅ 已测试 |
-| API 客户端 | tianyan_client.py | 600+ | ✅ Mock 委托已实现 |
-| 任务解析器 | parser.py | 867 | ⚠️ 待验证 |
-| 调度环境 | env.py | 845 | ⚠️ 待验证 |
-| RL 智能体 | agent.py | 669 | ⚠️ 待验证 |
-| 量子退火 | annealing.py | 766 | ⚠️ 待验证 |
-| Web 界面 | app.py | 1145 | ⚠️ 待验证 |
-| 训练脚本 | train_agent.py | 401 | ⚠️ 待验证 |
-| 仿真脚本 | run_simulation.py | 641 | ⚠️ 待验证 |
+| 模块 | 文件 | 实际行数 | 验证状态 |
+|------|------|---------|---------|
+| Mock API | mock_client.py | 510 | ✅ 已测试 |
+| API 客户端 | tianyan_client.py | 574 | ✅ Mock 委托已实现 |
+| 任务解析器 | parser.py | 816 | ⚠️ 待验证 |
+| 调度环境 | env.py | 720 | ⚠️ 待验证 |
+| RL 智能体 | agent.py | 592 | ⚠️ 待验证 |
+| 量子退火 | annealing.py | 682 | ⚠️ 待验证 |
+| Web 界面 | app.py | 1109 | ⚠️ 待验证 |
+| 工具函数 | helpers.py | 285 | ⚠️ 待验证 |
+| 训练脚本 | train_agent.py | — | ⚠️ 待验证 |
+| 仿真脚本 | run_simulation.py | — | ⚠️ 待验证 |
 | 快速训练 | quick_train.py | 63 | ✅ 已创建 |
 
 ### 待紧急处理
@@ -201,16 +227,23 @@ result = opt.solve_qubo(Q_matrix)
 
 ## 9. 团队信息
 
-| GitHub 用户名 | 权限 | 分工 |
-|---------------|------|------|
-| xiabai2004 | Admin | 项目负责人 + 架构 |
-| heka-ky | Write | 待分配 |
-| zyhsga | Write | 待分配 |
-| NN2914 | Write | 待分配 |
-| qpqpalalzmzm112 | Write | 待分配 |
-| Jackhock-1 | Write | 待分配 |
-| DUMNOX | Write | 待分配 |
-| K1660729 | Write | 待分配 |
+| GitHub 用户名 | 权限 | 分工 | 状态 |
+|---------------|------|------|------|
+| xiabai2004 | Admin | 项目负责人 + 架构 | ✅ 已加入 |
+| heka-ky | Write | 待分配 | ✅ 已加入 |
+| zyhsga | Write | 待分配 | ✅ 已加入 |
+| NN2914 | Write | 待分配 | ✅ 已加入 |
+| qpqpalalzmzm112 | Write | 待分配 | ✅ 已加入 |
+| Jackhock-1 | Write | 待分配 | ✅ 已加入 |
+| DUMNOX | Write | 待分配 | ✅ 已加入 |
+| K1660729 | Write | 待分配 | ✅ 已加入 |
+
+**团队分工建议**：
+- 算法开发（2-3人）：env.py、agent.py、annealing.py、真机测试
+- 后端开发（2人）：parser.py、tianyan_client.py、run_simulation.py
+- 前端开发（1-2人）：app.py（Vue3 + Echarts）
+- 测试与DevOps（1人）：单元测试、CI/CD、Docker
+- 文档与项目管理（1人）：训练脚本、文档完善、PPT制作
 
 仓库地址：https://github.com/xiabai2004/quantum-rl-scheduler（Private）
 
@@ -226,7 +259,24 @@ result = opt.solve_qubo(Q_matrix)
 7. **不要删除 docs/ 下的任何指南文件**
 
 
-## 11. 快速命令参考
+## 11. 代码规范
+
+| 规范项 | 要求 |
+|--------|------|
+| Python 版本 | ≥3.10（TRAE 使用 3.12.9） |
+| 代码格式化 | Black（line-length=88） |
+| 注释语言 | 中文 |
+| 函数/方法 | 必须有文档字符串（docstrings） |
+| 命名规范 | 类名 PascalCase，函数/变量 snake_case |
+
+**开发优先级顺序**（由高到低）：
+1. `src/scheduler/env.py` — RL 调度环境（Gymnasium 接口）
+2. `src/scheduler/agent.py` — RL 智能体（DQN 训练）
+3. `src/api/tianyan_client.py` — 天衍云 API 封装
+4. `src/quantum/annealing.py` — 量子退火加速模块
+5. `src/visualization/app.py` — Web 监控界面
+
+## 12. 快速命令参考
 
 ```bash
 # 验证 Mock API
