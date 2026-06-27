@@ -66,7 +66,7 @@ def test_env(task):
         obs, info = env.reset()
         
         assert obs is not None, "reset() 返回 None"
-        assert len(obs) == 8, f"状态维度错误: {len(obs)}"
+        assert len(obs) == 10, f"状态维度错误: {len(obs)}"
         
         action = 0
         obs, reward, terminated, truncated, info = env.step(action)

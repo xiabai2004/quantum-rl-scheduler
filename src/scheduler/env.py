@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 # 常量定义
 # ---------------------------------------------------------------------------
 
-# 状态向量索引
+# 状态向量索引（修改后：添加任务类型信息）
 OBS_QUBIT_AVAILABILITY = 0   # 当前可用量子比特比率
 OBS_QUEUE_LENGTH = 1          # 任务队列长度（归一化）
 OBS_AVG_WAIT_TIME = 2         # 平均等待时间（归一化）
@@ -49,20 +49,24 @@ OBS_CLASSICAL_LOAD = 4        # 经典计算资源负载
 OBS_QUANTUM_QUEUE_RATIO = 5   # 量子专用队列占比
 OBS_TIME_OF_DAY = 6           # 一天中的时间段（昼夜模拟）
 OBS_URGENCY_LEVEL = 7         # 当前任务紧急程度
+OBS_TASK_TYPE_QUANTUM = 8     # 当前任务是quantum类型（新增）
+OBS_TASK_TYPE_CLASSICAL = 9   # 当前任务是classical类型（新增）
 
-OBS_DIM = 8  # 状态空间维度
+OBS_DIM = 10  # 状态空间维度（从8增加到10）
 
 # 动作常量
 ACTION_CLASSICAL = 0   # 分配到经典计算资源
 ACTION_QUANTUM = 1     # 分配到量子计算资源
 ACTION_HYBRID = 2      # 混合执行
 
-# 奖励参数
-REWARD_QUANTUM_BASE = 10.0       # 量子执行基础奖励
-REWARD_CLASSICAL = 3.0            # 经典执行基准奖励
-REWARD_WAIT_OVER_THRESHOLD = -0.5  # 等待超时惩罚系数
-REWARD_LOW_QUBIT_UTIL = -2.0     # 量子比特利用率过低的惩罚
-REWARD_MISMATCH = -5.0           # 错误分配（不兼容资源）惩罚
+# 奖励参数（修改后：增强正确执行的奖励）
+REWARD_QUANTUM_BASE = 10.0       # 量子执行基础奖励（不变）
+REWARD_CLASSICAL = 5.0            # 经典执行奖励（从3.0提升到5.0）
+REWARD_HYBRID = 7.0               # 混合执行奖励（新增，介于经典和量子之间）
+REWARD_WAIT_OVER_THRESHOLD = -0.1  # 等待超时惩罚（从-0.5降低到-0.1，减少惩罚强度）
+REWARD_LOW_QUBIT_UTIL = -1.0     # 量子比特利用率惩罚（从-2.0降低到-1.0）
+REWARD_MISMATCH = -2.0           # 错误分配惩罚（从-5.0降低到-2.0）
+REWARD_SUCCESS_BONUS = 3.0       # 任务成功完成奖励（新增）
 QUANTUM_SPEEDUP_RANGE = (2.0, 5.0)  # 量子加速比范围
 
 # 环境参数
@@ -495,10 +499,13 @@ class QuantumSchedulingEnv(gym.Env):
         """
         检查任务类型与所选资源的兼容性。
 
-        兼容性规则：
-            - classical 任务 → 只能分配到经典资源 (action=0)
-            - quantum 任务   → 只能分配到量子资源 (action=1) 或混合执行 (action=2)
+        兼容性规则（修改后）：
+            - classical 任务 → 经典资源 (action=0) 或混合执行 (action=2)
+            - quantum 任务   → 量子资源 (action=1) 或混合执行 (action=2)
             - universal 任务 → 三种动作均兼容
+
+        注意：混合执行 (action=2) 现在对所有任务类型都兼容，
+        因为它会根据实际情况灵活选择资源。
 
         Args:
             task   : 待检查的任务
@@ -508,8 +515,10 @@ class QuantumSchedulingEnv(gym.Env):
             bool: True 表示兼容，False 表示不兼容
         """
         if task.task_type == "classical":
-            return action == ACTION_CLASSICAL
+            # classical任务：经典资源或混合执行都兼容
+            return action in (ACTION_CLASSICAL, ACTION_HYBRID)
         elif task.task_type == "quantum":
+            # quantum任务：量子资源或混合执行都兼容
             return action in (ACTION_QUANTUM, ACTION_HYBRID)
         else:  # universal
             return True
@@ -525,12 +534,12 @@ class QuantumSchedulingEnv(gym.Env):
         rng: np.random.Generator,
     ) -> float:
         """
-        计算任务执行成功后的即时奖励。
+        计算任务执行成功后的即时奖励（修改后）。
 
         奖励规则：
-            - 经典执行 (action=0) : +3（基准奖励）
+            - 经典执行 (action=0) : +5.0（基准奖励）
             - 量子执行 (action=1) : +10 * 量子加速比（加速比在 [2, 5] 间随机）
-            - 混合执行 (action=2) : +7（介于经典和量子之间）
+            - 混合执行 (action=2) : +7.0（介于经典和量子之间）
 
         量子加速比会受到当前保真度的影响：保真度越高，加速比越大。
         当保真度低于 0.9 时，量子执行奖励会打折。
@@ -544,7 +553,7 @@ class QuantumSchedulingEnv(gym.Env):
             float: 计算得到的即时奖励
         """
         if action == ACTION_CLASSICAL:
-            return REWARD_CLASSICAL
+            return REWARD_CLASSICAL + REWARD_SUCCESS_BONUS
 
         elif action == ACTION_QUANTUM:
             # 基础加速比在 [2, 5] 之间随机
@@ -556,14 +565,14 @@ class QuantumSchedulingEnv(gym.Env):
             # 保真度过低时打折
             if self._quantum.fidelity < 0.9:
                 reward *= 0.6
-            return reward
+            return reward + REWARD_SUCCESS_BONUS
 
         else:  # ACTION_HYBRID
-            # 混合执行奖励介于经典和量子之间
-            base = (REWARD_CLASSICAL + REWARD_QUANTUM_BASE) / 2.0
+            # 混合执行奖励（固定值）
+            base = REWARD_HYBRID
             # 根据量子资源可用性调整
             hybrid_factor = 0.5 + 0.5 * self._quantum.available_ratio
-            return base * hybrid_factor
+            return base * hybrid_factor + REWARD_SUCCESS_BONUS
 
     # ------------------------------------------------------------------
     # 私有方法：等待超时惩罚
@@ -664,7 +673,7 @@ class QuantumSchedulingEnv(gym.Env):
 
     def _get_observation(self) -> np.ndarray:
         """
-        构建并返回当前 8 维状态向量。
+        构建并返回当前 10 维状态向量（修改后：添加任务类型信息）。
 
         各维度含义及计算方式：
             [0] qubit_availability  : 量子比特可用比率（直接取值）
@@ -675,9 +684,11 @@ class QuantumSchedulingEnv(gym.Env):
             [5] quantum_queue_ratio : 量子队列 / (量子队列 + 经典队列 + 1)
             [6] time_of_day        : 当前模拟时刻
             [7] urgency_level      : 当前任务紧急程度（无任务时为 0）
+            [8] task_type_quantum  : 当前任务是quantum类型（1=是，0=不是）
+            [9] task_type_classical: 当前任务是classical类型（1=是，0=不是）
 
         Returns:
-            np.ndarray: 形状 (8,)，dtype=float32，值域 [0, 1]
+            np.ndarray: 形状 (10,)，dtype=float32，值域 [0, 1]
         """
         obs = np.zeros(OBS_DIM, dtype=np.float32)
 
@@ -706,6 +717,14 @@ class QuantumSchedulingEnv(gym.Env):
             obs[OBS_URGENCY_LEVEL] = float(np.clip(self._current_task.urgency, 0.0, 1.0))
         else:
             obs[OBS_URGENCY_LEVEL] = 0.0
+
+        # 添加任务类型编码（新增）
+        if self._current_task is not None:
+            obs[OBS_TASK_TYPE_QUANTUM] = 1.0 if self._current_task.task_type == "quantum" else 0.0
+            obs[OBS_TASK_TYPE_CLASSICAL] = 1.0 if self._current_task.task_type == "classical" else 0.0
+        else:
+            obs[OBS_TASK_TYPE_QUANTUM] = 0.0
+            obs[OBS_TASK_TYPE_CLASSICAL] = 0.0
 
         return obs
 
