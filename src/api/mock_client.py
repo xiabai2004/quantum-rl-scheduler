@@ -150,17 +150,39 @@ class MockTianyanClient:
         
         # 生成随机测量计数
         counts = {}
-        possible_states = [bin(i)[2:].zfill(num_qubits) for i in range(2 ** num_qubits)]
         
-        # 随机分配 shots
-        remaining_shots = shots
-        for i, state in enumerate(possible_states):
-            if i == len(possible_states) - 1:
-                counts[state] = remaining_shots
-            else:
-                count = random.randint(0, remaining_shots)
-                counts[state] = count
-                remaining_shots -= count
+        # 限制最大 qubit 数，防止内存爆炸（2^20 ≈ 100万，可接受）
+        MAX_QUBITS_FOR_FULL_ENUM = 20
+        if num_qubits <= MAX_QUBITS_FOR_FULL_ENUM:
+            #  qubit 数较少时使用全排列
+            possible_states = [bin(i)[2:].zfill(num_qubits) for i in range(2 ** num_qubits)]
+            
+            # 随机分配 shots
+            remaining_shots = shots
+            for i, state in enumerate(possible_states):
+                if i == len(possible_states) - 1:
+                    counts[state] = remaining_shots
+                else:
+                    count = random.randint(0, remaining_shots)
+                    counts[state] = count
+                    remaining_shots -= count
+        else:
+            # qubit 数较多时使用随机采样，避免全排列内存爆炸
+            num_samples = min(shots, 1000)  # 最多采样 1000 个不同状态
+            for _ in range(num_samples):
+                state = "".join(random.choice("01") for _ in range(num_qubits))
+                if state not in counts:
+                    counts[state] = 0
+            # 分配 shots
+            remaining_shots = shots
+            states_list = list(counts.keys())
+            for i, state in enumerate(states_list):
+                if i == len(states_list) - 1:
+                    counts[state] = remaining_shots
+                else:
+                    count = random.randint(0, remaining_shots)
+                    counts[state] = count
+                    remaining_shots -= count
         
         # 如果是 Bell 态电路（包含 h 和 cx），调整结果使其更接近 |00> + |11>
         if "h q[0]" in circuit_qasm and "cx q[0], q[1]" in circuit_qasm:
@@ -515,10 +537,15 @@ def create_tianyan_client(mock_mode: Optional[bool] = None) -> Any:
         if mock_mode_env in ("true", "1", "yes"):
             mock_mode = True
         else:
-            # 从配置文件读取
+            # 从配置文件读取（使用基于 __file__ 的绝对路径）
             try:
                 import yaml
-                with open("config/config.yaml", "r", encoding="utf-8") as f:
+                config_path = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                    "config",
+                    "config.yaml",
+                )
+                with open(config_path, "r", encoding="utf-8") as f:
                     config = yaml.safe_load(f)
                 mock_mode = config.get("tianyan", {}).get("mock_mode", True)
             except Exception:

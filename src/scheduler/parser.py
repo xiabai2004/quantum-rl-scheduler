@@ -14,6 +14,7 @@ Task Parser for Quantum Scheduling System
 
 import json
 import re
+import yaml
 from typing import Dict, List, Optional, Any, Literal, Union
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -43,8 +44,6 @@ KNOWN_ALGORITHMS: set = {
 MAX_QUBITS: int = 287
 MAX_CIRCUIT_DEPTH: int = 10000
 MAX_SHOTS: int = 100000
-
-import yaml
 
 
 # ============================================================
@@ -202,7 +201,7 @@ class TaskBuilder:
             builder.set_algorithm(task_dict["algorithm"])
 
         # qubits — 兼容 "qubits_required" / "qubit_count"
-        q = task_dict.get("qubits_required") or task_dict.get("qubit_count", 0)
+        q = task_dict.get("qubits_required", task_dict.get("qubit_count", 0))
         builder.set_qubits(int(q))
 
         # circuit_depth

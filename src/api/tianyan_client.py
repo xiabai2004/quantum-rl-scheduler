@@ -18,9 +18,6 @@ import requests
 from dotenv import load_dotenv
 from loguru import logger
 
-# 加载 .env 文件中的环境变量
-load_dotenv()
-
 
 class TianyanAPIError(Exception):
     """天衍云平台 API 自定义异常
@@ -100,6 +97,9 @@ class TianyanClient:
             base_url: API 基础 URL，若为 None 则从 ``config/config.yaml`` 读取。
             mock_mode: 是否使用 Mock 模式，None 表示自动检测。
         """
+        # 按需加载 .env 文件中的环境变量
+        load_dotenv()
+
         # 确定是否使用 Mock 模式
         self.mock_mode = self._detect_mock_mode(mock_mode)
         logger.info(f"Mock 模式: {self.mock_mode}")

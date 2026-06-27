@@ -126,7 +126,9 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        """断开 WebSocket 连接"""
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
         """向所有连接的客户端广播消息"""
@@ -142,47 +144,6 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
-
-
-# ============================================================
-# 后台模拟任务：定时更新状态（模拟调度引擎行为）
-# ============================================================
-
-async def simulate_scheduler():
-    """模拟调度引擎行为，定时更新系统状态"""
-    import random
-    while True:
-        await asyncio.sleep(3)  # 每3秒模拟一次调度
-        # 随机波动量子比特利用率
-        system_status["qubit_utilization"] = round(
-            max(0.1, min(1.0, system_status["qubit_utilization"] + random.uniform(-0.05, 0.05))),
-            4,
-        )
-        system_status["current_step"] += 1
-        system_status["queue_length"] = len([t for t in task_queue if t["status"] == "pending"])
-        system_status["average_wait_time"] = round(
-            max(0.5, system_status["average_wait_time"] + random.uniform(-1.0, 1.0)),
-            1,
-        )
-        system_status["last_update"] = datetime.now().isoformat()
-        # 随机完成一个 pending 任务
-        pending = [t for t in task_queue if t["status"] == "pending"]
-        if pending and random.random() < 0.3:
-            task = random.choice(pending)
-            task["status"] = "completed"
-            system_status["completed_tasks"] += 1
-            system_status["queue_length"] = max(0, system_status["queue_length"] - 1)
-        # 随机启动一个 pending 任务
-        pending = [t for t in task_queue if t["status"] == "pending"]
-        if pending and random.random() < 0.2:
-            task = random.choice(pending)
-            task["status"] = "running"
-        # 广播状态更新
-        await manager.broadcast({
-            "type": "status_update",
-            "status": system_status,
-            "tasks": task_queue,
-        })
 
 
 @asynccontextmanager
@@ -529,7 +490,15 @@ async def websocket_endpoint(websocket: WebSocket):
         # 保持连接，监听客户端消息（心跳/指令）
         while True:
             data = await websocket.receive_text()
-            msg = json.loads(data)
+            try:
+                msg = json.loads(data)
+            except json.JSONDecodeError:
+                # 忽略非 JSON 消息，避免连接断开
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Invalid JSON format",
+                })
+                continue
             # 客户端可发送 {"action": "ping"} 作为心跳
             if msg.get("action") == "ping":
                 await websocket.send_json({"type": "pong"})
@@ -550,7 +519,7 @@ async def simulate_scheduler():
 
         # 尝试使用 PPO 推理
         model = _get_ppo_model()
-        if model is not None and model.env is not None:
+        if model is not None and model.env is not None and _ppo_env is not None:
             try:
                 obs = model.env.reset()[0]
                 action, _ = model.predict(obs, deterministic=True)

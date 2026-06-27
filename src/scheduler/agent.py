@@ -6,7 +6,7 @@ Reinforcement Learning Agent for Quantum-Classical Hybrid Task Scheduling
 任务调度决策。支持 Dueling DQN 架构、Epsilon-Greedy 探索策略以及 TensorBoard
 训练可视化。
 
-状态空间（8维，对应 env.py 的 SchedulingEnv）：
+状态空间（10维，对应 env.py 的 QuantumSchedulingEnv）：
     0 - qubit_availability  : 当前可用量子比特比率（0-1）
     1 - queue_length         : 当前任务队列长度（归一化 0-1）
     2 - avg_wait_time        : 队列中任务平均等待时间（归一化）
@@ -15,6 +15,8 @@ Reinforcement Learning Agent for Quantum-Classical Hybrid Task Scheduling
     5 - quantum_queue_ratio  : 量子专用队列占比（0-1）
     6 - time_of_day          : 一天中的时间段（0-1，模拟昼夜负载差异）
     7 - urgency_level        : 当前任务的紧急程度（0-1）
+    8 - task_type_quantum    : 当前任务是否为 quantum 类型（0-1）
+    9 - task_type_classical  : 当前任务是否为 classical 类型（0-1）
 
 动作空间（Discrete(3)）：
     0 - 分配到经典计算资源
@@ -28,6 +30,7 @@ from typing import Dict, Tuple, Optional, Any
 
 from stable_baselines3 import DQN
 from stable_baselines3.dqn import MlpPolicy
+from stable_baselines3.common.save_util import load_from_zip_file
 from stable_baselines3.dqn.policies import QNetwork
 from stable_baselines3.common.callbacks import (
     BaseCallback,
@@ -565,7 +568,6 @@ class SchedulerAgent:
         Args:
             path: 模型文件路径（SB3 会自动处理 .zip 扩展名）
         """
-        from stable_baselines3.common.save_util import load_from_zip_file
         data, params, _ = load_from_zip_file(path, device="cpu")
         
         self.model = DQN(
@@ -672,14 +674,22 @@ class AnnealingCallback(BaseCallback):
         if self.n_calls % self.interval == 0 and self.n_calls > 0:
             try:
                 # 获取当前网络权重 → QUBO → 退火 → 优化后权重
-                optimized = self.optimizer.optimize_policy(self.model)
+                optimized_agent = self.optimizer.optimize_policy(self.model)
 
-                if optimized and optimized.get("quality", 0) > self.best_reward:
-                    self.best_reward = optimized["quality"]
+                # 从优化后的 agent 中提取质量指标（loss 越小，质量越高）
+                quality = 0.0
+                if hasattr(self.optimizer, "_evaluate_network_quality"):
+                    policy_net = self.optimizer._get_policy_net(optimized_agent)
+                    if policy_net is not None:
+                        loss = self.optimizer._evaluate_network_quality(policy_net)
+                        quality = -loss  # loss 越小，质量越高
+
+                if quality > self.best_reward:
+                    self.best_reward = quality
                     self.optimized_count += 1
 
                     if self.verbose:
-                        print(f"[退火] 步数{self.n_calls}: 优化完成 (质量={optimized['quality']:.4f}, "
+                        print(f"[退火] 步数{self.n_calls}: 优化完成 (质量={quality:.4f}, "
                               f"累计优化{self.optimized_count}次)")
             except Exception as e:
                 if self.verbose:

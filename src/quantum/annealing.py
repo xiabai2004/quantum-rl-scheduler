@@ -78,7 +78,7 @@ class QuantumAnnealingOptimizer:
 
     def __init__(
         self,
-        num_qubits: int = 8,
+        num_qubits: int = 16,
         annealing_time: float = 20.0,
         shots: int = 1000,
     ):
@@ -86,14 +86,24 @@ class QuantumAnnealingOptimizer:
         初始化量子退火策略优化器
 
         Args:
-            num_qubits    : 量子比特数（默认 8），对应 QUBO 变量的个数。
+            num_qubits    : 量子比特数（默认 16），对应 QUBO 变量的个数。
                             实际使用时会自动扩展以匹配策略网络的权重总数。
+                            建议值：≥16（每权重至少 4 bit，含 1 符号位 + 3 数值位）
             annealing_time: 退火时间，单位微秒（默认 20μs），仅在连接 D-Wave 真机时有效。
             shots         : 退火采样次数（默认 1000），多次采样后取能量最低的解。
         """
         self.num_qubits = num_qubits
         self.annealing_time = annealing_time
         self.shots = shots
+
+        # 检查比特编码精度，过低则发出警告
+        n_bits_per_weight = max(1, num_qubits // 4)
+        if n_bits_per_weight < 4:
+            logger.warning(
+                f"量子比特数 {num_qubits} 较低，每权重仅 {n_bits_per_weight} bit 编码 "
+                f"（1 符号位 + {n_bits_per_weight - 1} 数值位），精度可能不足。"
+                f"建议 num_qubits ≥ 16 以获得更好的优化效果。"
+            )
 
         # 自动选择求解器：
         #   优先使用 D-Wave neal 模拟退火器（如果 SDK 可用）
