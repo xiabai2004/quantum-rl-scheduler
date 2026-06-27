@@ -3,7 +3,7 @@
 > 此文件供所有 AI Agent（CodeBuddy / TRAE / Claude / Cursor 等）读取，以快速理解项目全貌。
 > 每次重要变更后请更新本文档的"最后更新"日期和对应章节。
 
-**最后更新**：2026-06-27  
+**最后更新**：2026-06-27（v4 — PPO 夺冠）  
 
 ---
 
@@ -101,8 +101,8 @@ git push --no-verify origin main
     │
     ├── 调度引擎 (src/scheduler/)
     │   ├── parser.py   — 任务解析器（QASM → 标准化Task）
-    │   ├── env.py      — Gymnasium 调度环境（状态/动作/奖励）
-    │   └── agent.py    — DQN 智能体（Dueling 架构）
+    │   ├── env.py      — Gymnasium 调度环境（10维状态/3类动作/异质化任务）
+    │   └── agent.py    — DQN + PPO 双智能体（PPO 为主力）
     │
     ├── 量子加速模块 (src/quantum/)
     │   └── annealing.py — 量子退火求解器（QUBO映射 + 求解）
@@ -124,8 +124,12 @@ quantum-rl-scheduler/
 ├── .gitignore
 ├── CONTRIBUTING.md               # 贡献指南
 ├── LICENSE                       # 许可证
+├── Dockerfile                    # Docker 容器化
+├── docker-compose.yml            # 一键部署
+├── .dockerignore
 ├── .trae/
-│   └── instructions.md           # TRAE Agent 指令文件
+│   └── documents/
+│       └── development_plan.md   # TRAE 开发计划
 ├── githooks/
 │   ├── commit-msg                # Commit 格式检查 hook
 │   └── pre-push                  # 主分支保护 hook
@@ -138,31 +142,37 @@ quantum-rl-scheduler/
 │   ├── __init__.py
 │   ├── scheduler/                # 调度引擎（核心模块）
 │   │   ├── __init__.py           # SchedulerAgent, QuantumSchedulingEnv, Task 等导出
-│   │   ├── parser.py             # 量化任务解析（816行）
-│   │   ├── env.py                # Gymnasium 调度环境（720行）
-│   │   └── agent.py              # Dueling DQN 智能体（592行）
+│   │   ├── parser.py             # 量化任务解析（867行）
+│   │   ├── env.py                # Gymnasium 调度环境（10维状态,异质化任务,860+行）
+│   │   └── agent.py              # Dueling DQN + PPO 智能体（691行）
 │   │
 │   ├── api/
 │   │   ├── __init__.py           # 工厂函数 get_client() / create_tianyan_client()
-│   │   ├── tianyan_client.py     # 天衍云 API 客户端（574行）
-│   │   └── mock_client.py        # Mock API 客户端（510行）
+│   │   ├── tianyan_client.py     # 天衍云 API 客户端（639行）
+│   │   └── mock_client.py        # Mock API 客户端（572行）
 │   │
 │   ├── quantum/
 │   │   ├── __init__.py
-│   │   └── annealing.py          # 量子退火优化器（682行）
+│   │   └── annealing.py          # 量子退火优化器（1,076行）
 │   │
 │   ├── visualization/
 │   │   ├── __init__.py
-│   │   └── app.py               # FastAPI Web 监控界面（1109行）
+│   │   └── app.py               # FastAPI Web 监控界面（1,164行）
+│   │   └── frontend/
+│   │       └── index.html       # Vue3 + Echarts 前端（744行）
 │   │
 │   └── utils/
 │       ├── __init__.py
 │       └── helpers.py            # 工具函数（285行）
 │
 ├── scripts/
-│   ├── quick_train.py            # 快速训练验证（63行）★ 新增
-│   ├── train_agent.py            # 完整训练脚本
-│   ├── run_simulation.py         # 仿真对比脚本
+│   ├── quick_train.py            # 快速训练验证（63行）
+│   ├── train_agent.py            # 完整训练脚本（717行）
+│   ├── run_simulation.py         # 仿真对比脚本（720行）
+│   ├── e2e_test.py              # 端到端集成测试（181行）
+│   ├── hyperparameter_search.py  # 超参数网格搜索（221行）
+│   ├── diagnose_reward.py       # Reward 诊断脚本（54行）
+│   ├── generate_report.py        # 策略对比报告生成器
 │   ├── test_mock_api.py          # Mock API 测试
 │   └── install-hooks.sh          # Git Hooks 安装脚本
 │
@@ -183,7 +193,7 @@ quantum-rl-scheduler/
         └── task.md
 ```
 
-**总核心代码量**：约 4,788 行 Python（不含测试和文档）
+**总核心代码量**：约 8,900 行 Python（不含测试和文档）
 
 
 ## 5. 技术栈
@@ -191,7 +201,7 @@ quantum-rl-scheduler/
 | 层级 | 技术 | 版本 | 用途 |
 |------|------|------|------|
 | 语言 | Python | ≥3.10（TRAE 使用 3.12.9） | 全部 |
-| RL | Stable-Baselines3 | ≥2.0.0 | DQN 算法 |
+| RL | Stable-Baselines3 | ≥2.0.0 | DQN + PPO 双算法 |
 | RL | Gymnasium | ≥0.28.0 | 环境封装 |
 | DL | PyTorch | ≥2.0.0 | 神经网络 |
 | 量子 | Qiskit / PennyLane | ≥1.0 | 量子电路仿真 |
@@ -218,18 +228,22 @@ from src.scheduler.parser import TaskParser, Task, TaskBuilder
 parser = TaskParser()
 task = parser.parse_qasm(qasm_string, priority=5)
 
-# 调度环境（8维状态空间，Discrete(3)动作空间）
+# 调度环境（10维状态空间，Discrete(3)动作空间，异质化任务生成）
 from src.scheduler.env import QuantumSchedulingEnv
 env = QuantumSchedulingEnv(max_qubits=20)
 obs, _ = env.reset()
 obs, reward, terminated, truncated, info = env.step(action)
 
-# RL 智能体（Dueling DQN）
+# RL 智能体 — PPO（主力算法，已验证超越所有基线）
+from src.scheduler.agent import PPOAgent
+agent = PPOAgent(env, learning_rate=3e-4, n_steps=2048, gamma=0.99)
+agent.train(total_timesteps=50000)
+agent.model.save("./models/ppo_model")
+
+# RL 智能体 — DQN（备选算法，Dueling 架构）
 from src.scheduler.agent import SchedulerAgent
 agent = SchedulerAgent(env, learning_rate=1e-4, batch_size=32)
 model = agent.train(total_timesteps=5000, eval_freq=500, log_dir="./logs")
-agent.save("./models/model")
-eval_result = agent.evaluate(num_episodes=5)
 
 # API 客户端（自动选择 Mock/真实模式）
 from src.api import get_client
@@ -262,26 +276,51 @@ metrics = MetricsCalculator()
 
 ## 8. 当前开发进度
 
-### 已就绪
-| 模块 | 文件 | 实际行数 | 验证状态 | 备注 |
-|------|------|---------|---------|------|
-| Mock API | mock_client.py | 510 | ✅ 已测试 | |
-| API 客户端 | tianyan_client.py | 574 | ✅ Mock 委托已实现 | |
-| 任务解析器 | parser.py | 816 | ✅ 已验证 | TaskParser + Builder + Legacy |
-| 调度环境 | env.py | 720 | ✅ 已验证 | Gymnasium 接口完整 |
-| RL 智能体 | agent.py | 592 | ✅ 已验证 | Dueling DQN 架构 |
-| 量子退火 | annealing.py | 682 | ✅ 已验证 | QUBO映射 + numpy仿真 |
-| Web 界面 | app.py | 1109 | ✅ 已验证 | FastAPI + WebSocket |
+### 已就绪（v4 — PPO 夺冠）
+| 模块 | 文件 | 行数 | 验证状态 | 备注 |
+|------|------|------|---------|------|
+| Mock API | mock_client.py | 572 | ✅ 已测试 | |
+| API 客户端 | tianyan_client.py | 639 | ✅ Mock 委托已实现 | |
+| 任务解析器 | parser.py | 867 | ✅ 已验证 | TaskParser + Builder + Legacy |
+| 调度环境 | env.py | 860+ | ✅ 已验证 | 10维状态,异质化任务生成,资源波动 |
+| RL 智能体 | agent.py | 691 | ✅ 已验证 | Dueling DQN + PPO 双算法 |
+| 量子退火 | annealing.py | 1,076 | ✅ 已验证 | QUBO映射 + 梯度引导 + 仿真求解 |
+| Web 界面 | app.py | 1,164 | ✅ 已验证 | FastAPI + Vue3 + Echarts |
 | 快速训练 | quick_train.py | 63 | ✅ 已验证 | 端到端训练通过 |
-| 工具函数 | helpers.py | 285 | ✅ 已验证 | |
-| 训练脚本 | train_agent.py | — | ⚠️ 待验证 | |
-| 仿真脚本 | run_simulation.py | — | ⚠️ 待验证 | |
+| 端到端测试 | e2e_test.py | 181 | ✅ 已验证 | parser→env→agent→annealing 全通 |
+| 超参数搜索 | hyperparameter_search.py | 221 | ✅ 已验证 | |
+| 训练脚本 | train_agent.py | 717 | ✅ 已验证 | 10万步训练脚本 |
+| 仿真脚本 | run_simulation.py | 720 | ✅ 已验证 | 8种策略对比 |
+| Docker | Dockerfile + compose | — | ✅ 已创建 | 一键部署 |
+| 单元测试 | test_scheduler.py | 760 | ✅ 56用例通过 | |
+
+### v4 核心成果 — PPO 策略对比
+
+| 排名 | 策略 | 平均奖励 | 完成率 | 量子利用率 |
+|------|------|---------|--------|-----------|
+| 🥇 | **PPO** | **+2,804** | 100% | 44.93% |
+| 🥈 | FCFS | +1,456 | 100% | 46.37% |
+| 🥉 | SJF | +1,443 | 100% | 39.16% |
+| 4 | Random | +1,267 | 100% | 41.07% |
+| 5 | Greedy | -143 | 100% | 42.38% |
+| 6 | Quantum-Only | -804 | 100% | 45.43% |
+| 7 | DQN | -954 | 100% | 41.65% |
+| 8 | Classical-Only | -1,134 | 100% | 43.94% |
+
+**PPO 比第二名 FCFS 高 92.5%，比 Random 高 121.3%**。DQN 在异质化环境下表现不佳，PPO 是主力算法。
+
+### 开发历程（v1→v4）
+| 版本 | 关键变化 | DQN reward | 对比文件 |
+|------|---------|-----------|---------|
+| v1 | 初始代码 | 未测 | — |
+| v2 | 训练脚本、前端、Docker | -843 | `results/simulation_results_20260627_162510.json` |
+| v3 | reward归一化、10维状态 | -145 | 未单独保存 |
+| v4 | 环境异质化 + PPO | -954 (DQN) / **+2804 (PPO)** | `results/strategy_comparison_report_v4.md` |
 
 ### 待紧急处理
 - [ ] **发送平台申请邮件**（截止 6/30）→ 收件人 `saiyuan@chinatelecom.cn`
-- [x] 端到端训练验证（5000步 DQN）✅ 已完成
-- [ ] 仿真对比测试（RL vs 贪心 vs FIFO）
-- [ ] 单元测试补充
+- [ ] 天衍云真机验证（预计 7-8 月）
+- [ ] 参赛材料准备（PPT、演示视频，9月15日前）
 
 
 ## 9. 团队信息
@@ -329,30 +368,37 @@ metrics = MetricsCalculator()
 | 命名规范 | 类名 PascalCase，函数/变量 snake_case |
 
 **开发优先级顺序**（由高到低）：
-1. `src/scheduler/env.py` — RL 调度环境（Gymnasium 接口）
-2. `src/scheduler/agent.py` — RL 智能体（DQN 训练）
-3. `src/api/tianyan_client.py` — 天衍云 API 封装
-4. `src/quantum/annealing.py` — 量子退火加速模块
-5. `src/visualization/app.py` — Web 监控界面
+1. `src/scheduler/env.py` — RL 调度环境（10维状态，异质化任务，Gymnasium 接口）
+2. `src/scheduler/agent.py` — RL 智能体（PPO 主力 + DQN 备选）
+3. `src/api/tianyan_client.py` — 天衍云 API 封装（Mock/真实 自动切换）
+4. `src/quantum/annealing.py` — 量子退火加速模块（QUBO + 梯度引导）
+5. `src/visualization/app.py` — Web 监控界面（FastAPI + Vue3 + Echarts）
 
 ## 12. 快速命令参考
 
 ```bash
-# 验证 Mock API
-python scripts/test_mock_api.py
+# ── 验证 ──
+python scripts/test_mock_api.py          # Mock API 功能测试
+python scripts/e2e_test.py              # 端到端集成测试
+python scripts/quick_train.py           # 快速训练验证（5000步）
 
-# 快速训练验证
-python scripts/quick_train.py
+# ── 训练 ──
+python scripts/train_agent.py --config config/config.yaml       # DQN 训练
+python -c "from src.scheduler.env import QuantumSchedulingEnv; from src.scheduler.agent import PPOAgent; ..."  # PPO 训练
 
-# 完整训练
-python scripts/train_agent.py --config config/config.yaml
+# ── 仿真对比 ──
+python scripts/run_simulation.py --mock-mode --num-tasks 200    # 8策略对比
+python scripts/hyperparameter_search.py --timesteps 20000       # 超参数搜索
 
-# 仿真对比
-python scripts/run_simulation.py --mock-mode --num-tasks 50
+# ── 查看结果 ──
+cat results/strategy_comparison_report_v4.md                    # 策略对比报告
+tensorboard --logdir=tensorboard_logs/                          # 训练曲线
 
-# 启动 Web 界面
+# ── Web 界面 ──
 uvicorn src.visualization.app:app --reload --port 8000
 
-# 推送到 GitHub（注意 hook 拦截）
-git push --no-verify origin main
-```
+# ── Docker ──
+docker-compose up -d
+
+# ── Git ──
+git push --no-verify origin main                                # 推送（绕过 hook）
