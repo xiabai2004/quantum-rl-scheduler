@@ -50,9 +50,19 @@ class TianyanClient:
     - 量子后端信息查询
     - 队列状态监控
 
+    支持真实 API 模式和 Mock 模式（开发阶段使用）。
+
     使用示例::
 
+        # 真实模式（需要有效 API Key）
         client = TianyanClient()
+
+        # Mock 模式（开发/测试用）
+        client = TianyanClient(mock_mode=True)
+
+        # 自动检测配置（推荐）
+        client = TianyanClient()  # 会根据 config.yaml 和环境变量自动选择
+
         if client.authenticate():
             task_id = client.submit_quantum_task(circuit_qasm="OPENQASM 2.0; ...")
             status = client.get_task_status(task_id)
@@ -61,6 +71,7 @@ class TianyanClient:
     Args:
         api_key: API 密钥（默认从环境变量 TIANYAN_API_KEY 读取）
         base_url: API 基础 URL（默认从 config/config.yaml 读取）
+        mock_mode: 是否使用 Mock 模式（None 表示自动检测）
     """
 
     # 指数退避重试参数
@@ -68,15 +79,44 @@ class TianyanClient:
     RETRY_BACKOFF_FACTOR = 2  # 每次重试的等待时间倍数
     RETRY_INITIAL_WAIT = 1.0  # 首次重试等待秒数
 
-    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        mock_mode: Optional[bool] = None,
+    ):
         """初始化天衍云客户端
 
         按优先级读取配置：显式传参 > 环境变量 > config/config.yaml 默认值。
 
+        Mock 模式检测顺序：
+        1. 显式传参 ``mock_mode``
+        2. 环境变量 ``TIANYAN_MOCK_MODE``（true/1/yes）
+        3. 配置文件 ``config/config.yaml`` 中的 ``tianyan.mock_mode``
+        4. 默认：True（开发阶段默认使用 Mock 模式）
+
         Args:
             api_key: API 密钥，若为 None 则从环境变量 ``TIANYAN_API_KEY`` 读取。
             base_url: API 基础 URL，若为 None 则从 ``config/config.yaml`` 读取。
+            mock_mode: 是否使用 Mock 模式，None 表示自动检测。
         """
+        # 确定是否使用 Mock 模式
+        self.mock_mode = self._detect_mock_mode(mock_mode)
+        logger.info(f"Mock 模式: {self.mock_mode}")
+
+        if self.mock_mode:
+            # Mock 模式：创建 Mock 客户端并委托所有 API 调用
+            from src.api.mock_client import MockTianyanClient
+            self._mock_client = MockTianyanClient(
+                mock_delay=float(os.getenv("TIANYAN_MOCK_DELAY", "1.0")),
+                mock_failure_rate=float(os.getenv("TIANYAN_MOCK_FAILURE_RATE", "0.0")),
+            )
+            logger.info("✅ 使用 Mock 模式（不依赖真实平台）")
+            return
+
+        # 真实模式：初始化真实 API 客户端
+        self._mock_client = None
+
         # 读取 api_key
         self.api_key = api_key or os.getenv("TIANYAN_API_KEY", "")
 
@@ -93,6 +133,36 @@ class TianyanClient:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
         })
+
+    @staticmethod
+    def _detect_mock_mode(explicit_mock_mode: Optional[bool]) -> bool:
+        """检测是否使用 Mock 模式
+
+        Args:
+            explicit_mock_mode: 显式传参的 mock_mode 值
+
+        Returns:
+            是否使用 Mock 模式
+        """
+        # 1. 显式传参优先
+        if explicit_mock_mode is not None:
+            return explicit_mock_mode
+
+        # 2. 环境变量
+        mock_env = os.getenv("TIANYAN_MOCK_MODE", "").lower()
+        if mock_env in ("true", "1", "yes"):
+            return True
+        if mock_env in ("false", "0", "no"):
+            return False
+
+        # 3. 配置文件
+        try:
+            with open("config/config.yaml", "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+            mock_config = config.get("tianyan", {}).get("mock_mode", True)
+            return mock_config
+        except Exception:
+            return True  # 默认使用 Mock 模式
 
     @staticmethod
     def _load_base_url_from_config(config_path: str = "config/config.yaml") -> str:
@@ -238,6 +308,10 @@ class TianyanClient:
         Raises:
             TianyanAPIError: 认证请求本身出现异常（非 401 错误）
         """
+        # Mock 模式委托
+        if self.mock_mode and hasattr(self, "_mock_client") and self._mock_client:
+            return self._mock_client.authenticate()
+
         try:
             result = self._request("GET", "/auth/verify")
             logger.info("API 密钥验证通过")
@@ -292,6 +366,11 @@ class TianyanClient:
             ...     shots=2048,
             ... )
         """
+        if self.mock_mode and hasattr(self, "_mock_client") and self._mock_client:
+            return self._mock_client.submit_quantum_task(
+                circuit_qasm=circuit_qasm, shots=shots, backend=backend
+            )
+
         payload = {
             "type": "quantum",
             "format": "qasm",
@@ -322,6 +401,9 @@ class TianyanClient:
         Raises:
             TianyanAPIError: 查询失败时抛出
         """
+        if self.mock_mode and hasattr(self, "_mock_client") and self._mock_client:
+            return self._mock_client.get_task_status(task_id)
+
         result = self._request("GET", f"/tasks/{task_id}/status")
         logger.debug(f"任务 {task_id} 状态: {result.get('status')}")
         return result
@@ -344,6 +426,9 @@ class TianyanClient:
         Raises:
             TianyanAPIError: 查询失败或任务尚未完成时抛出
         """
+        if self.mock_mode and hasattr(self, "_mock_client") and self._mock_client:
+            return self._mock_client.get_task_result(task_id)
+
         result = self._request("GET", f"/tasks/{task_id}/result")
         logger.info(f"获取任务 {task_id} 结果成功")
         return result
@@ -362,6 +447,9 @@ class TianyanClient:
         Raises:
             TianyanAPIError: 查询失败时抛出
         """
+        if self.mock_mode and hasattr(self, "_mock_client") and self._mock_client:
+            return self._mock_client.list_backends()
+
         result = self._request("GET", "/backends")
         backends = result.get("backends", [])
         logger.info(f"可用后端数量: {len(backends)}")
@@ -388,6 +476,9 @@ class TianyanClient:
         Raises:
             TianyanAPIError: 查询失败或后端不存在时抛出
         """
+        if self.mock_mode and hasattr(self, "_mock_client") and self._mock_client:
+            return self._mock_client.get_backend_info(backend_name)
+
         result = self._request("GET", f"/backends/{backend_name}")
         logger.debug(f"后端 {backend_name} 信息: {result.get('num_qubits')} qubits")
         return result
@@ -411,6 +502,9 @@ class TianyanClient:
         Raises:
             TianyanAPIError: 提交失败时抛出
         """
+        if self.mock_mode and hasattr(self, "_mock_client") and self._mock_client:
+            return self._mock_client.submit_classical_task(code=code, language=language)
+
         payload = {
             "type": "classical",
             "language": language,
@@ -440,6 +534,9 @@ class TianyanClient:
         Raises:
             TianyanAPIError: 查询失败时抛出
         """
+        if self.mock_mode and hasattr(self, "_mock_client") and self._mock_client:
+            return self._mock_client.get_queue_status()
+
         result = self._request("GET", "/queue/status")
         logger.info(f"队列状态: {result.get('total_pending', 0)} 待执行, "
                      f"{result.get('total_running', 0)} 执行中")
@@ -500,6 +597,13 @@ class TianyanClient:
 # 模块入口示例
 # ======================================================================
 if __name__ == "__main__":
+    import sys
+    import os
+
+    _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if str(_PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PROJECT_ROOT))
+
     # 初始化客户端
     client = TianyanClient()
 
