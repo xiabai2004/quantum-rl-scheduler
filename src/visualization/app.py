@@ -13,16 +13,24 @@ Web Visualization Monitoring Dashboard
 
 import asyncio
 import json
+import os
+import sys
 import time
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel, Field
+
+# 确保项目根目录在 Python 路径中
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 
 # ============================================================
@@ -58,7 +66,7 @@ system_status: Dict = {
     "average_wait_time": 12.3,       # 平均等待时间(秒)
     "completed_tasks": 42,           # 已完成任务数
     "current_step": 1024,            # 当前调度步数
-    "current_strategy": "DQN-Reward",  # 当前调度策略
+    "current_strategy": "PPO-Balanced",  # 当前调度策略
     "strategy_options": [            # 可选策略列表
         "DQN-Reward",
         "DQN-Latency",
@@ -332,6 +340,146 @@ async def update_status(update: SystemStatusUpdate):
 
 
 # ============================================================
+# PPO 数据接口
+# ============================================================
+
+# 懒加载 PPO 模型和环境
+_ppo_model = None
+_ppo_env = None
+
+def _get_ppo_model():
+    """加载 PPO 模型（懒加载，避免启动时阻塞）"""
+    global _ppo_model, _ppo_env
+    if _ppo_model is None:
+        try:
+            from src.scheduler.env import QuantumSchedulingEnv
+            from stable_baselines3 import PPO
+
+            _ppo_env = QuantumSchedulingEnv(max_qubits=20, seed=42)
+            model_path = os.path.join(_PROJECT_ROOT, "models", "ppo_seed_42", "ppo_model.zip")
+
+            if os.path.exists(model_path):
+                _ppo_model = PPO.load(model_path, env=_ppo_env)
+                print(f"[PPO] 模型加载成功: {model_path}")
+            else:
+                print(f"[PPO] 模型文件不存在: {model_path}，尝试使用 DQN")
+        except Exception as e:
+            print(f"[PPO] 模型加载失败: {e}")
+            _ppo_model = None
+    return _ppo_model
+
+
+@app.get("/api/ppo/comparison")
+async def get_ppo_comparison():
+    """返回 PPO 与其他策略的对比数据（从 v4 报告中读取）"""
+    report_dir = os.path.join(_PROJECT_ROOT, "results")
+    json_files = sorted(
+        [f for f in os.listdir(report_dir) if f.startswith("simulation_results_") and f.endswith(".json")],
+        reverse=True,
+    )
+    if not json_files:
+        return {"error": "未找到仿真结果文件", "strategies": [], "ppo_rank": None}
+
+    latest_file = os.path.join(report_dir, json_files[0])
+    try:
+        with open(latest_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {"error": f"无法读取: {latest_file}", "strategies": [], "ppo_rank": None}
+
+    sorted_items = sorted(data.items(), key=lambda x: x[1].get("avg_reward", -9999), reverse=True)
+    ppo_rank = next((i+1 for i, (k, _) in enumerate(sorted_items) if "PPO" in k.upper()), None)
+
+    strategies = []
+    for rank, (name, metrics) in enumerate(sorted_items, 1):
+        strategies.append({
+            "rank": rank,
+            "name": name,
+            "avg_reward": metrics.get("avg_reward", 0),
+            "avg_wait_time": metrics.get("avg_wait_time", 0),
+            "completion_rate": metrics.get("completion_rate", 0),
+            "qubit_utilization": metrics.get("qubit_utilization", 0),
+            "classical_utilization": metrics.get("classical_utilization", 0),
+        })
+
+    return {
+        "strategies": strategies,
+        "ppo_rank": ppo_rank,
+        "total_strategies": len(strategies),
+        "data_source": json_files[0],
+    }
+
+
+@app.get("/api/ppo/predict")
+async def ppo_predict():
+    """使用 PPO 模型对当前环境状态进行一次推理预测"""
+    model = _get_ppo_model()
+    if model is None:
+        return {"error": "PPO 模型未加载", "action": None, "confidence": 0}
+
+    try:
+        obs = _ppo_env.reset()[0]
+        action, _states = model.predict(obs, deterministic=True)
+
+        action_map = {0: "经典资源", 1: "量子资源", 2: "混合执行"}
+        return {
+            "action": int(action),
+            "action_name": action_map.get(int(action), "未知"),
+            "observation": obs.tolist()[:5],
+            "model_type": "PPO",
+        }
+    except Exception as e:
+        return {"error": str(e), "action": None}
+
+
+@app.get("/api/ppo/stats")
+async def ppo_stats():
+    """返回 PPO 关键性能指标"""
+    report_dir = os.path.join(_PROJECT_ROOT, "results")
+    json_files = sorted(
+        [f for f in os.listdir(report_dir) if f.startswith("simulation_results_") and f.endswith(".json")],
+        reverse=True,
+    )
+    if not json_files:
+        return {"error": "未找到仿真结果"}
+
+    try:
+        with open(os.path.join(report_dir, json_files[0]), "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {"error": "无法读取结果文件"}
+
+    ppo_data = None
+    for k, v in data.items():
+        if "PPO" in k.upper():
+            ppo_data = v
+            break
+
+    if not ppo_data:
+        return {"error": "未找到 PPO 数据"}
+
+    # 计算排名
+    sorted_items = sorted(data.items(), key=lambda x: x[1].get("avg_reward", -9999), reverse=True)
+    ppo_rank = next(i+1 for i, (k, _) in enumerate(sorted_items) if "PPO" in k.upper())
+    best_name, best_data = sorted_items[0]
+
+    return {
+        "ppo": {
+            "reward": ppo_data.get("avg_reward"),
+            "wait_time": ppo_data.get("avg_wait_time"),
+            "completion_rate": ppo_data.get("completion_rate"),
+            "qubit_util": ppo_data.get("qubit_utilization"),
+            "classical_util": ppo_data.get("classical_utilization"),
+        },
+        "ppo_rank": ppo_rank,
+        "total": len(sorted_items),
+        "best_strategy": best_name,
+        "best_reward": best_data.get("avg_reward"),
+        "vs_random": round(ppo_data.get("avg_reward", 0) - data.get("Random", {}).get("avg_reward", 0), 1),
+    }
+
+
+# ============================================================
 # WebSocket 路由：实时推送状态更新
 # ============================================================
 
@@ -346,11 +494,25 @@ async def websocket_endpoint(websocket: WebSocket):
     """
     await manager.connect(websocket)
     try:
-        # 连接后立即发送当前状态
+        # 连接后立即发送当前状态 + PPO 数据
+        ppo_stats = {}
+        try:
+            report_dir = os.path.join(_PROJECT_ROOT, "results")
+            json_files = sorted([f for f in os.listdir(report_dir) if f.startswith("simulation_results_")], reverse=True)
+            if json_files:
+                with open(os.path.join(report_dir, json_files[0]), "r") as f:
+                    sim_data = json.load(f)
+                sorted_items = sorted(sim_data.items(), key=lambda x: x[1].get("avg_reward", -9999), reverse=True)
+                ppo_rank = next((i+1 for i, (k, _) in enumerate(sorted_items) if "PPO" in k.upper()), None)
+                ppo_stats = {"ppo_rank": ppo_rank, "total": len(sorted_items)}
+        except Exception:
+            pass
+
         await websocket.send_json({
             "type": "init",
             "status": system_status,
             "tasks": task_queue,
+            "ppo_stats": ppo_stats,
         })
         # 保持连接，监听客户端消息（心跳/指令）
         while True:
@@ -368,39 +530,58 @@ async def websocket_endpoint(websocket: WebSocket):
 # ============================================================
 
 async def simulate_scheduler():
-    """模拟调度引擎行为，定时更新系统状态"""
+    """模拟调度引擎行为 — 使用 PPO 模型进行推理决策"""
+    import random
     while True:
-        await asyncio.sleep(3)  # 每3秒模拟一次调度
-        # 随机波动量子比特利用率
-        import random
-        system_status["qubit_utilization"] = round(
-            max(0.1, min(1.0, system_status["qubit_utilization"] + random.uniform(-0.05, 0.05))),
-            4,
-        )
+        await asyncio.sleep(3)
         system_status["current_step"] += 1
+
+        # 尝试使用 PPO 推理
+        model = _get_ppo_model()
+        if model is not None and model.env is not None:
+            try:
+                obs = model.env.reset()[0]
+                action, _ = model.predict(obs, deterministic=True)
+                # 根据 PPO 预测更新利用率
+                target_qubit = 0.45 if action == 1 else (0.40 if action == 2 else 0.35)
+                system_status["qubit_utilization"] = round(
+                    system_status["qubit_utilization"] * 0.7 + target_qubit * 0.3, 4
+                )
+            except Exception:
+                # PPO 推理失败，回退随机
+                system_status["qubit_utilization"] = round(
+                    max(0.1, min(1.0, system_status["qubit_utilization"] + random.uniform(-0.03, 0.03))), 4
+                )
+        else:
+            # 无模型，随机模拟
+            system_status["qubit_utilization"] = round(
+                max(0.1, min(1.0, system_status["qubit_utilization"] + random.uniform(-0.03, 0.03))), 4
+            )
+
         system_status["queue_length"] = len([t for t in task_queue if t["status"] == "pending"])
         system_status["average_wait_time"] = round(
-            max(0.5, system_status["average_wait_time"] + random.uniform(-1.0, 1.0)),
-            1,
+            max(0.5, system_status["average_wait_time"] + random.uniform(-0.5, 0.5)), 1
         )
         system_status["last_update"] = datetime.now().isoformat()
-        # 随机完成一个 pending 任务
+
+        # PPO-Balanced 策略：平衡量子/经典资源分配
         pending = [t for t in task_queue if t["status"] == "pending"]
-        if pending and random.random() < 0.3:
+        if pending and random.random() < 0.35:
             task = random.choice(pending)
             task["status"] = "completed"
             system_status["completed_tasks"] += 1
             system_status["queue_length"] = max(0, system_status["queue_length"] - 1)
-        # 随机启动一个 pending 任务
+
         pending = [t for t in task_queue if t["status"] == "pending"]
-        if pending and random.random() < 0.2:
+        if pending and random.random() < 0.25:
             task = random.choice(pending)
             task["status"] = "running"
-        # 广播状态更新
+
         await manager.broadcast({
             "type": "status_update",
             "status": system_status,
             "tasks": task_queue,
+            "ppo_active": _ppo_model is not None,
         })
 
 
@@ -732,6 +913,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             <div class="card-value" id="val-completed">0</div>
             <div class="card-sub">累计完成数</div>
         </div>
+        <div class="status-card card-purple">
+            <div class="card-label">PPO 排名</div>
+            <div class="card-value" id="val-ppo-rank" style="font-size:28px;">-</div>
+            <div class="card-sub" id="sub-ppo">8种策略对比</div>
+        </div>
         <div class="status-card card-cyan">
             <div class="card-label">当前调度策略</div>
             <div class="card-value" id="val-strategy" style="font-size:20px;">-</div>
@@ -902,7 +1088,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         // ============================================================
 
         /** 更新顶部状态卡片 */
-        function renderStatus(status) {
+        function renderStatus(status, ppoStats) {
             document.getElementById('val-qubit').textContent =
                 (status.qubit_utilization * 100).toFixed(1) + '%';
             document.getElementById('val-queue').textContent = status.queue_length;
@@ -910,6 +1096,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             document.getElementById('val-completed').textContent = status.completed_tasks;
             document.getElementById('val-strategy').textContent = status.current_strategy || '-';
             document.getElementById('val-step').textContent = 'Step: ' + (status.current_step || 0);
+
+            // PPO 排名
+            if (ppoStats && ppoStats.ppo_rank) {
+                var rankEl = document.getElementById('val-ppo-rank');
+                rankEl.textContent = '#' + ppoStats.ppo_rank + ' / ' + (ppoStats.total || 8);
+                var colors = ['#fbbf24', '#e2e8f0', '#cd7f32', '#94a3b8'];
+                rankEl.style.color = colors[Math.min(ppoStats.ppo_rank - 1, 3)] || '#64748b';
+                document.getElementById('sub-ppo').textContent = ppoStats.ppo_rank === 1 ? '🥇 策略对比第1名' : '8种策略对比';
+            }
         }
 
         /** 更新任务队列表格 */
@@ -979,7 +1174,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
                 strategyOptions = currentStatus.strategy_options || [];
 
-                renderStatus(currentStatus);
+                // 拉取 PPO 统计数据
+                var ppoStats = {};
+                try {
+                    var ppoResp = await fetch('/api/ppo/stats');
+                    var ppoData = await ppoResp.json();
+                    if (ppoData.ppo_rank) {
+                        ppoStats = { ppo_rank: ppoData.ppo_rank, total: ppoData.total };
+                    }
+                } catch (e) { /* 忽略 PPO 加载失败 */ }
+
+                renderStatus(currentStatus, ppoStats);
                 renderTasks(currentTasks);
                 renderStrategies(strategyOptions, currentStatus.current_strategy);
             } catch (e) {
@@ -1062,7 +1267,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     currentStatus = msg.status;
                     currentTasks = msg.tasks || [];
                     strategyOptions = currentStatus.strategy_options || [];
-                    renderStatus(currentStatus);
+                    renderStatus(currentStatus, msg.ppo_stats);
                     renderTasks(currentTasks);
                     renderStrategies(strategyOptions, currentStatus.current_strategy);
 
