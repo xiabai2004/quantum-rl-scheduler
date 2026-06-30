@@ -56,15 +56,33 @@ def build_test_circuit():
 
 
 def submit_one(client, circuit, name, shots):
-    """提交一个任务，返回 {success, time_s, task_id, error}"""
+    """提交并等待真机执行完成，返回 {success, time_s, task_id, error}"""
     start = time.time()
     try:
         tid = client.submit_quantum_task(circuit=circuit, shots=shots, task_name=name)
+        # 等待真机执行完成（之前只提交不等待，导致假数据）
+        result = client.wait_for_task(tid, timeout=300)
         elapsed = round(time.time() - start, 2)
-        return {"success": True, "time_s": elapsed, "task_id": tid}
+        success = result.get("status") == "completed"
+        return {
+            "success": success,
+            "time_s": elapsed,
+            "task_id": tid,
+            "result": result.get("result", "")[:100],
+        }
     except Exception as e:
         elapsed = round(time.time() - start, 2)
         return {"success": False, "time_s": elapsed, "error": str(e)[:80]}
+
+
+def submit_one_fast(client, circuit, name, shots):
+    """仅提交不等待（用于故障测试，不需要真机结果）"""
+    start = time.time()
+    try:
+        tid = client.submit_quantum_task(circuit=circuit, shots=shots, task_name=name)
+        return {"success": True, "time_s": round(time.time() - start, 2), "task_id": tid}
+    except Exception as e:
+        return {"success": False, "time_s": round(time.time() - start, 2), "error": str(e)[:80]}
 
 
 def strategy_names():
