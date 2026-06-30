@@ -1,39 +1,54 @@
 """
 src.api 包初始化模块
-自动导出真实/Mock 客户端，根据配置自动切换
+支持三种后端：Mock / REST / cqlib（真机优先）
 """
+
+import os
 
 from src.api.tianyan_client import TianyanClient, TianyanAPIError
 from src.api.mock_client import MockTianyanClient, create_tianyan_client
+from src.api.tianyan_cqlib import CqlibTianyanClient
 
 __all__ = [
     "TianyanClient",
     "TianyanAPIError",
     "MockTianyanClient",
+    "CqlibTianyanClient",
     "create_tianyan_client",
+    "get_client",
+    "get_cqlib_client",
 ]
+
+
+def get_cqlib_client(machine_name: str = "tianyan_s") -> CqlibTianyanClient:
+    """获取 cqlib 真机客户端
+
+    从环境变量 TIANYAN_API_KEY 读取密钥，直接连接天衍云超导真机。
+
+    Args:
+        machine_name: 量子计算机名称（默认 tianyan_s）
+
+    Returns:
+        CqlibTianyanClient 实例
+    """
+    api_key = os.getenv("TIANYAN_API_KEY", "")
+    if not api_key:
+        raise ValueError("未设置 TIANYAN_API_KEY 环境变量")
+    return CqlibTianyanClient(login_key=api_key, machine_name=machine_name)
 
 
 def get_client(mock_mode: bool = None):
     """获取天衍云客户端（自动选择真实或 Mock 模式）
 
     优先读取顺序：
-    1. 显式传参 ``mock_mode``
-    2. 环境变量 ``TIANYAN_MOCK_MODE``
-    3. 配置文件 ``config/config.yaml`` 中的 ``tianyan.mock_mode``
+    1. 显式传参 mock_mode
+    2. 环境变量 TIANYAN_MOCK_MODE
+    3. 默认使用 Mock 模式
 
     Args:
         mock_mode: 是否使用 Mock 模式（None 表示自动检测）
 
     Returns:
-        真实客户端或 Mock 客户端实例
-
-    Examples:
-        >>> # 自动检测配置（推荐）
-        >>> from src.api import get_client
-        >>> client = get_client()
-        >>>
-        >>> # 强制使用 Mock 模式
-        >>> client = get_client(mock_mode=True)
+        客户端实例
     """
     return create_tianyan_client(mock_mode=mock_mode)
