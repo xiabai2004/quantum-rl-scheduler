@@ -185,7 +185,7 @@ quantum-rl-scheduler/
 │   ├── Git工作流.md               # 分支管理规范
 │   ├── 团队分工.md                # 角色职责
 │   ├── 开发计划.md               # 详细时间线
-│   └── 项目记忆_给TRAE.md         # TRAE 专用记忆文件
+│   └── 项目记忆_给AI.md            # AI 助手同步记忆文件
 │
 └── .github/
     ├── PULL_REQUEST_TEMPLATE.md
