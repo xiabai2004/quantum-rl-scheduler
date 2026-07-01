@@ -63,7 +63,8 @@ def run_mock_simulation(circuits, shots=512):
 
 def build_test_circuits():
     """构建测试电路"""
-    c = lambda n, ins: {"qubits": n, "gates": len(ins), "qcis": ins}
+    def c(n, ins):
+        return {"qubits": n, "gates": len(ins), "qcis": ins}
     return {
         "H_1q":    c(1, "H Q0\nM Q0"),
         "H2_1q":   c(1, "H Q0\nH Q0\nM Q0"),

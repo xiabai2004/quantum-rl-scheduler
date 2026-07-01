@@ -68,7 +68,7 @@ def test_annealing_ppo():
         steps = 0
         while not done and steps < 50:
             action, _ = model.predict(obs, deterministic=True)
-            obs, reward, terminated, truncated, info = env.step(action)
+            obs, reward, terminated, truncated, _info = env.step(action)
             total_reward += reward
             done = terminated or truncated
             steps += 1

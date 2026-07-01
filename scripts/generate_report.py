@@ -13,7 +13,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 
-def generate_report(json_path: str, output_path: str = None) -> str:
+def generate_report(json_path: str, output_path: str | None = None) -> str:
     """
     从仿真结果 JSON 生成 Markdown 格式对比报告。
 

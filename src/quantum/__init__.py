@@ -15,12 +15,12 @@ from src.quantum.annealing import QUANTUM_ACCELERATION_ENABLED, QuantumAnnealing
 try:
     from src.quantum.circuit import QuantumCircuitGenerator
 except ImportError:
-    QuantumCircuitGenerator = None  # type: ignore[assignment, misc]
+    QuantumCircuitGenerator = None
 
 try:
     from src.quantum.fidelity import FidelityEstimator
 except ImportError:
-    FidelityEstimator = None  # type: ignore[assignment, misc]
+    FidelityEstimator = None
 
 # 旧版兼容别名
 QuantumAnnealingAccelerator = QuantumAnnealingOptimizer

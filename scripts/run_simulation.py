@@ -485,7 +485,7 @@ def plot_comparison(results: dict[str, dict[str, float]], output_path: str):
         bars = ax.bar(strategies, values, color=colors[: len(strategies)], edgecolor="white", linewidth=0.5)
 
         # 在柱子上方标注数值
-        for bar, val in zip(bars, values):
+        for bar, val in zip(bars, values, strict=False):
             ax.text(
                 bar.get_x() + bar.get_width() / 2,
                 bar.get_height() + max(values) * 0.02,
@@ -587,10 +587,10 @@ def run_simulation(
                 real_prob = 0.0
 
     # ---- 创建共享的基础环境配置 ----
-    base_env_kwargs = dict(
-        max_steps=tasks_per_episode,
-        max_qubits=287,
-    )
+    base_env_kwargs = {
+        "max_steps": tasks_per_episode,
+        "max_qubits": 287,
+    }
 
     # ---- 创建策略 ----
     strategies: list[BaseStrategy] = []

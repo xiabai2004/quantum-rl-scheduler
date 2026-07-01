@@ -61,7 +61,6 @@ def run_search(
     """执行网格搜索"""
     results = []
     total_combinations = np.prod([len(v) for v in param_grid.values()])
-    combination_count = 0
 
     print(f"{'='*60}")
     print("超参数网格搜索")
@@ -75,9 +74,8 @@ def run_search(
     values = list(param_grid.values())
 
     from itertools import product
-    for params in product(*values):
-        combination_count += 1
-        param_dict = dict(zip(keys, params))
+    for combination_count, params in enumerate(product(*values), start=1):
+        param_dict = dict(zip(keys, params, strict=False))
 
         print(f"\n--- [{combination_count}/{total_combinations}] 参数组合 ---")
         for k, v in param_dict.items():

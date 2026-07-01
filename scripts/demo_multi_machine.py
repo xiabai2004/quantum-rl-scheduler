@@ -88,10 +88,7 @@ def run_episode(
     done = False
 
     while not done:
-        if use_ppo:
-            action = policy(obs)
-        else:
-            action = heuristic_policy(obs, info)
+        action = policy(obs) if use_ppo else heuristic_policy(obs, info)
         obs, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
         steps += 1

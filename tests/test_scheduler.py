@@ -69,7 +69,7 @@ class TestQuantumSchedulingEnv(unittest.TestCase):
 
     def test_step(self):
         """测试环境步进"""
-        obs, info = self.env.reset(seed=42)
+        _obs, info = self.env.reset(seed=42)
 
         action = self.env.action_space.sample()
         next_obs, reward, terminated, truncated, info = self.env.step(action)
@@ -142,7 +142,7 @@ class TestQuantumSchedulingEnv(unittest.TestCase):
 
     def test_info_keys(self):
         """测试 info 字典包含预期的键"""
-        obs, info = self.env.reset(seed=42)
+        _obs, info = self.env.reset(seed=42)
         _, _, _, _, info = self.env.step(0)
 
         expected_keys = ["total_scheduled", "quantum_success",
@@ -214,7 +214,7 @@ class TestMultiMachineScheduling(unittest.TestCase):
         )
         env.reset(seed=7)
         for _ in range(80):
-            obs, _, term, trunc, _ = env.step(1)  # 全部走量子资源
+            _obs, _, term, trunc, _ = env.step(1)  # 全部走量子资源
             if term or trunc:
                 break
         # 至少有任务被路由到某台机器
@@ -689,7 +689,7 @@ class TestQuantumAnnealing(unittest.TestCase):
         weights = self.optimizer.bitstring_to_weights(bitstring, original_shapes)
 
         self.assertEqual(len(weights), len(original_shapes))
-        for w, shape in zip(weights, original_shapes):
+        for w, shape in zip(weights, original_shapes, strict=False):
             self.assertEqual(w.shape, shape)
 
     def test_bitstring_to_weights_with_current(self):
@@ -709,12 +709,12 @@ class TestQuantumAnnealing(unittest.TestCase):
         )
 
         self.assertEqual(len(new_weights), len(original_shapes))
-        for w, shape in zip(new_weights, original_shapes):
+        for w, shape in zip(new_weights, original_shapes, strict=False):
             self.assertEqual(w.shape, shape)
 
         # 全 0 比特串对应 0 更新，所以新权重应该和旧权重相同
         # （符号位 0 = 正，但数值位全 0 → magnitude = 0 → delta = 0）
-        for w_old, w_new in zip(current_weights, new_weights):
+        for w_old, w_new in zip(current_weights, new_weights, strict=False):
             np.testing.assert_array_almost_equal(w_old, w_new, decimal=5)
 
     def test_compute_qubo_energy(self):
@@ -831,9 +831,9 @@ class TestIntegration(unittest.TestCase):
 
         state, _ = env.reset(seed=42)
 
-        for i in range(20):
+        for _i in range(20):
             action = agent.predict(state, deterministic=False)
-            next_state, reward, terminated, truncated, info = env.step(action)
+            next_state, reward, terminated, truncated, _info = env.step(action)
 
             self.assertEqual(next_state.shape, (OBS_DIM,))
             self.assertIsInstance(reward, float)

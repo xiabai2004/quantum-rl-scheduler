@@ -612,7 +612,7 @@ class LegacyTaskParser:
     保留原有接口：parse(str, format) → TaskFeatures。
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.supported_formats = ["json", "yaml", "qasm", "text"]
 
     def parse(self, task_description: str, format: str = "json") -> TaskFeatures | None:

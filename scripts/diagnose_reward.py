@@ -43,7 +43,7 @@ def diagnose_reward():
     total = 0.0
     for i in range(100):
         action = np.random.randint(0, 3)
-        obs, reward, done, truncated, info = env2.step(action)
+        _obs, reward, done, _truncated, _info = env2.step(action)
         total += reward
         if done:
             break

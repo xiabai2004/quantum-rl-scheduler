@@ -11,19 +11,16 @@
 from __future__ import annotations
 
 import statistics
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
-
-import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.scheduler.parser import LegacyTaskParser
-
 
 ITERATIONS = 1000
 WARMUP_ITERATIONS = 50
@@ -91,7 +88,7 @@ def run_case(
     for _ in range(WARMUP_ITERATIONS):
         parser.parse(case.qasm, format="qasm")
 
-    durations_us: List[float] = []
+    durations_us: list[float] = []
     last_features = None
     started = time.perf_counter()
 
@@ -125,7 +122,7 @@ def run_case(
     )
 
 
-def print_results(results: List[BenchmarkResult]) -> None:
+def print_results(results: list[BenchmarkResult]) -> None:
     """输出 Markdown 风格 benchmark 表格。"""
     print("Task parser QASM benchmark")
     print(f"Iterations per case: {ITERATIONS}")
