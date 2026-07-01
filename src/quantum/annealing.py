@@ -18,14 +18,13 @@ QUBO 问题形式：min  x^T Q x，其中 x ∈ {0,1}^n, Q 为 n×n 的实数矩
     仿真模式仅依赖 numpy（始终可用）
 """
 
-import os
-import math
 import logging
+import math
+import os
 import random
-from typing import List, Tuple, Optional, Any
+from typing import Any
 
 import numpy as np
-
 import torch
 from torch import nn
 
@@ -43,8 +42,7 @@ logger = logging.getLogger(__name__)
 
 # 尝试导入 D-Wave Ocean SDK（真机模式所需）
 try:
-    import dimod           # D-Wave 的 QUBO/Ising 建模工具
-    import neal            # D-Wave 的模拟退火求解器
+    import neal  # D-Wave 的模拟退火求解器
     _DWAVE_AVAILABLE = True
     logger.info("已检测到 D-Wave Ocean SDK (dimod + neal)，真机/高级仿真模式可用。")
 except ImportError:
@@ -127,16 +125,16 @@ class QuantumAnnealingOptimizer:
         # 内置模拟退火超参数
         self._sim_initial_temp = 2.0      # 初始温度
         self._sim_cooling_rate = 0.995    # 降温系数
-        self._sim_num_sweeps = 2000        # 扫描次数（迭代轮数）
+        self._sim_num_sweeps = 200        # 扫描次数（减少以适应 QUBO 规模）
 
     # ------------------------------------------------------------------
     # 方法 2: network_to_qubo
     # ------------------------------------------------------------------
     def network_to_qubo(
         self,
-        weights: List[np.ndarray],
-        gradients: Optional[List[np.ndarray]] = None,
-        td_errors: Optional[np.ndarray] = None,
+        weights: list[np.ndarray],
+        gradients: list[np.ndarray] | None = None,
+        td_errors: np.ndarray | None = None,
     ) -> np.ndarray:
         """
         将神经网络权重列表映射为 QUBO 矩阵（优化版 v2）
@@ -207,7 +205,7 @@ class QuantumAnnealingOptimizer:
         )
 
         # ---------- 步骤 3：构造 QUBO 矩阵 ----------
-        Q = np.zeros((total_bits, total_bits), dtype=np.float64)
+        Q = np.zeros((total_bits, total_bits), dtype=np.float64)  # noqa: N806
 
         # 计算权重的全局统计量，用于归一化更新幅度
         weight_std = np.std(flat_weights) + 1e-8
@@ -286,7 +284,7 @@ class QuantumAnnealingOptimizer:
         if use_gradient and num_weights > 1:
             # 仅在同一层内相邻权重之间添加耦合（通过权重形状判断层边界）
             offset = 0
-            for w_idx, w_layer in enumerate(weights):
+            for _w_idx, w_layer in enumerate(weights):
                 layer_size = w_layer.size
                 layer_start = offset
                 layer_end = offset + layer_size
@@ -406,9 +404,9 @@ class QuantumAnnealingOptimizer:
     def bitstring_to_weights(
         self,
         bitstring: str,
-        original_shape: List[Tuple[int, ...]],
-        current_weights: Optional[List[np.ndarray]] = None,
-    ) -> List[np.ndarray]:
+        original_shape: list[tuple[int, ...]],
+        current_weights: list[np.ndarray] | None = None,
+    ) -> list[np.ndarray]:
         """
         将最优比特串解码还原为神经网络权重（v2 - 符号-数值编码 + 权重差）
 
@@ -512,8 +510,8 @@ class QuantumAnnealingOptimizer:
         agent: Any,
         num_iterations: int = 10,
         learning_rate: float = 0.01,
-        callback: Optional[Any] = None,
-        replay_buffer: Optional[Any] = None,
+        callback: Any | None = None,
+        replay_buffer: Any | None = None,
         head_only: bool = True,
         max_head_tensors: int = 4,
     ) -> Any:
@@ -551,7 +549,9 @@ class QuantumAnnealingOptimizer:
             return agent
 
         # 获取策略网络
-        policy_net = self._get_policy_net(agent)
+        # head_only 模式需要完整的 policy（含 action_net/value_net 输出头）
+        # 非 head_only 模式使用 mlp_extractor 即可
+        policy_net = self._get_full_policy(agent) if head_only else self._get_policy_net(agent)
         if policy_net is None:
             logger.error("无法获取策略网络，退出 optimize_policy")
             return agent
@@ -559,10 +559,12 @@ class QuantumAnnealingOptimizer:
         logger.info(
             f"开始量子退火策略优化 (v2 - 梯度引导): {num_iterations} 次迭代, "
             f"学习率={learning_rate}, 量子比特数={self.num_qubits}"
+            f"{', head_only模式' if head_only else ''}"
         )
 
         # 如果启用了 head_only 模式，计算需要优化的参数张量索引范围
-        # 仅优化网络最后 max_head_tensors 个参数张量（通常是输出头的权重和偏置）
+        # PPO 完整 policy 的参数顺序: [0-7: mlp_extractor, 8-9: action_net, 10-11: value_net]
+        # 仅优化最后 max_head_tensors 个（action_net + value_net = 4 个张量, 260 参数）
         if head_only:
             all_params = list(policy_net.parameters())
             total_tensors = len(all_params)
@@ -583,7 +585,7 @@ class QuantumAnnealingOptimizer:
         # 初始评估
         initial_loss = self._evaluate_network_quality(policy_net)
         best_loss = initial_loss
-        initial_weights, initial_shapes = self._extract_weights(policy_net)
+        initial_weights, _initial_shapes = self._extract_weights(policy_net)
         best_weights = [w.copy() for w in initial_weights]
         # 记录初始权重 L2 范数，用于最终计算退火前后权重差异
         initial_flat = np.concatenate([w.flatten() for w in initial_weights])
@@ -642,7 +644,7 @@ class QuantumAnnealingOptimizer:
             # 退火前后权重差异（L2 范数 + 最大绝对差）
             delta_flat = np.concatenate([
                 (ow - cw).flatten()
-                for ow, cw in zip(optimized_head_weights, current_weights)
+                for ow, cw in zip(optimized_head_weights, current_weights, strict=False)
             ])
             delta_l2 = float(np.linalg.norm(delta_flat))
             delta_max = float(np.max(np.abs(delta_flat))) if delta_flat.size else 0.0
@@ -750,7 +752,7 @@ class QuantumAnnealingOptimizer:
     # ==================================================================
 
     @staticmethod
-    def _get_policy_net(agent: Any) -> Optional[nn.Module]:
+    def _get_policy_net(agent: Any) -> nn.Module | None:
         """
         从 agent 对象中获取策略网络
 
@@ -779,7 +781,25 @@ class QuantumAnnealingOptimizer:
         return None
 
     @staticmethod
-    def _extract_weights(network: nn.Module) -> Tuple[List[np.ndarray], List[Tuple[int, ...]]]:
+    def _get_full_policy(agent: Any) -> nn.Module | None:
+        """
+        获取完整的 policy 网络（含输出头），用于 head_only 模式
+
+        与 _get_policy_net 的区别：
+            - _get_policy_net 对 PPO 返回 mlp_extractor（不含 action_net/value_net）
+            - _get_full_policy 对 PPO 返回完整的 ActorCriticPolicy（含所有参数）
+
+        支持的 agent 类型：与 _get_policy_net 相同
+        """
+        # SB3 PPO: 返回完整的 policy（含 action_net + value_net 输出头）
+        if hasattr(agent, "policy") and isinstance(agent.policy, nn.Module):
+            return agent.policy
+
+        # 其它类型回退到 _get_policy_net
+        return QuantumAnnealingOptimizer._get_policy_net(agent)
+
+    @staticmethod
+    def _extract_weights(network: nn.Module) -> tuple[list[np.ndarray], list[tuple[int, ...]]]:
         """
         从 PyTorch 网络中提取所有权重参数
 
@@ -818,9 +838,9 @@ class QuantumAnnealingOptimizer:
     @staticmethod
     def _apply_weights(
         network: nn.Module,
-        old_weights: List[np.ndarray],
-        new_weights: List[np.ndarray],
-        shapes: List[Tuple[int, ...]],
+        old_weights: list[np.ndarray],
+        new_weights: list[np.ndarray],
+        shapes: list[tuple[int, ...]],
         learning_rate: float = 0.01,
     ):
         """
@@ -838,7 +858,7 @@ class QuantumAnnealingOptimizer:
         """
         with torch.no_grad():
             for param, w_old, w_new, shape in zip(
-                network.parameters(), old_weights, new_weights, shapes
+                network.parameters(), old_weights, new_weights, shapes, strict=False
             ):
                 assert w_new.shape == shape, (
                     f"权重形状不匹配: 期望 {shape}, 实际 {w_new.shape}"
@@ -853,8 +873,8 @@ class QuantumAnnealingOptimizer:
     @staticmethod
     def _apply_weights_v2(
         network: nn.Module,
-        old_weights: List[np.ndarray],
-        new_weights: List[np.ndarray],
+        old_weights: list[np.ndarray],
+        new_weights: list[np.ndarray],
         learning_rate: float = 0.01,
     ):
         """
@@ -873,7 +893,7 @@ class QuantumAnnealingOptimizer:
         """
         with torch.no_grad():
             for param, w_old, w_new in zip(
-                network.parameters(), old_weights, new_weights
+                network.parameters(), old_weights, new_weights, strict=False
             ):
                 # 计算更新量 Δw = w_new - w_old
                 delta = w_new - w_old
@@ -884,7 +904,7 @@ class QuantumAnnealingOptimizer:
                 param.copy_(torch.from_numpy(w_final.astype(np.float32)))
 
     @staticmethod
-    def _set_weights(network: nn.Module, weights: List[np.ndarray]):
+    def _set_weights(network: nn.Module, weights: list[np.ndarray]):
         """
         直接设置网络权重（用于回滚）
 
@@ -893,7 +913,42 @@ class QuantumAnnealingOptimizer:
             weights: 权重列表
         """
         with torch.no_grad():
-            for param, w in zip(network.parameters(), weights):
+            for param, w in zip(network.parameters(), weights, strict=False):
+                param.copy_(torch.from_numpy(w.astype(np.float32)))
+
+    @staticmethod
+    def _apply_weights_v2_partial(
+        params: list[nn.Parameter],
+        old_weights: list[np.ndarray],
+        new_weights: list[np.ndarray],
+        learning_rate: float = 0.01,
+    ):
+        """
+        将优化后的权重应用到指定的参数子集（用于 head_only 模式）
+
+        Args:
+            params        : PyTorch 参数列表（子集）
+            old_weights   : 旧权重列表
+            new_weights   : 量子退火优化后的完整权重列表
+            learning_rate : 学习率，控制更新幅度
+        """
+        with torch.no_grad():
+            for param, w_old, w_new in zip(params, old_weights, new_weights, strict=False):
+                delta = w_new - w_old
+                w_final = w_old + learning_rate * delta
+                param.copy_(torch.from_numpy(w_final.astype(np.float32)))
+
+    @staticmethod
+    def _set_params_from_weights(params: list[nn.Parameter], weights: list[np.ndarray]):
+        """
+        直接将权重写入参数子集（用于 head_only 模式下的回滚）
+
+        Args:
+            params  : PyTorch 参数列表（子集）
+            weights : 权重列表
+        """
+        with torch.no_grad():
+            for param, w in zip(params, weights, strict=False):
                 param.copy_(torch.from_numpy(w.astype(np.float32)))
 
     def _compute_gradients(
@@ -902,7 +957,7 @@ class QuantumAnnealingOptimizer:
         replay_buffer: Any,
         agent: Any,
         batch_size: int = 64,
-    ) -> Tuple[List[np.ndarray], np.ndarray, float]:
+    ) -> tuple[list[np.ndarray], np.ndarray, float]:
         """
         计算策略网络的梯度和 TD 误差
 
@@ -927,7 +982,7 @@ class QuantumAnnealingOptimizer:
             try:
                 batch = replay_buffer.sample(batch_size)
             except Exception:
-                raise ValueError("Replay buffer 采样失败")
+                raise ValueError("Replay buffer 采样失败") from None
         else:
             raise ValueError("Replay buffer 不支持 sample 方法")
 
@@ -1041,21 +1096,16 @@ class QuantumAnnealingOptimizer:
         temperature = self._sim_initial_temp
 
         # ---------- 主循环：逐步降温 ----------
-        for sweep in range(self._sim_num_sweeps):
+        for sweep in range(self._sim_num_sweeps):  # noqa: B007
             # 在每个温度下，翻转 n 个比特（一次完整扫描）
             for _ in range(n):
                 # 随机选择一个比特进行翻转
                 flip_idx = random.randint(0, n - 1)
 
-                # 计算翻转后的能量变化（增量计算，无需重新计算全部能量）
-                # ΔE = E(x') - E(x) = Q[flip_idx, flip_idx] * (1 - 2*x[flip_idx])
-                #     + Σ_{j≠flip_idx} Q[flip_idx, j] * x[j] * (1 - 2*x[flip_idx])
-                # 简化: ΔE = (1 - 2*x[flip]) * (Q[flip,flip] + Σ_{j≠flip} Q[flip,j]*x[j])
+                # 计算翻转后的能量变化（向量化，避免 Python 层内循环）
+                # ΔE = (1 - 2*x[flip]) * (Σ_j Q[flip,j] * x[j])
                 delta = 1.0 - 2.0 * current_solution[flip_idx]
-                linear_term = qubo_matrix[flip_idx, flip_idx]
-                for j in range(n):
-                    if j != flip_idx:
-                        linear_term += qubo_matrix[flip_idx, j] * current_solution[j]
+                linear_term = np.dot(qubo_matrix[flip_idx], current_solution)
                 delta_energy = delta * linear_term
 
                 # Metropolis 准则：以概率 min(1, exp(-ΔE/T)) 接受新解
@@ -1156,7 +1206,7 @@ if __name__ == "__main__":
     original_shapes = [w.shape for w in mock_weights]
     decoded_weights = optimizer.bitstring_to_weights(bitstring, original_shapes)
     print(f"  解码后权重层数: {len(decoded_weights)}")
-    for i, (dw, orig_shape) in enumerate(zip(decoded_weights, original_shapes)):
+    for i, (dw, orig_shape) in enumerate(zip(decoded_weights, original_shapes, strict=False)):
         assert dw.shape == orig_shape, f"形状不匹配: {dw.shape} vs {orig_shape}"
         print(f"  第 {i} 层: 形状 {dw.shape}, 范围 [{dw.min():.4f}, {dw.max():.4f}]")
 
@@ -1196,8 +1246,6 @@ if __name__ == "__main__":
 
     # 需要重新导入模块以刷新全局变量（仅当以包方式运行时有效）
     # 脚本直接运行时，直接修改全局变量
-    import importlib
-    import sys
     # 将当前模块标记为启用量子加速
     import __main__
     __main__.QUANTUM_ACCELERATION_ENABLED = True
@@ -1216,7 +1264,7 @@ if __name__ == "__main__":
         torch.equal(p1, p2)
         for p1, p2 in zip(
             optimized_agent.policy_net.parameters(),
-            optimized_agent.target_net.parameters(),
+            optimized_agent.target_net.parameters(), strict=False,
         )
     )
     print(f"  target_net 同步状态: {'✅ 已同步' if params_match else '❌ 未同步'}")
