@@ -4,6 +4,7 @@ src.api 包初始化模块
 """
 
 import os
+from typing import Optional
 
 from src.api.tianyan_client import TianyanClient, TianyanAPIError
 from src.api.mock_client import MockTianyanClient, create_tianyan_client
@@ -43,7 +44,7 @@ def get_cqlib_client(machine_name: str = "tianyan_s") -> CqlibTianyanClient:
     return CqlibTianyanClient(login_key=api_key, machine_name=machine_name)
 
 
-def get_client(mock_mode: bool = None):
+def get_client(mock_mode: Optional[bool] = None):
     """获取天衍云客户端（自动选择真实或 Mock 模式）
 
     优先读取顺序：

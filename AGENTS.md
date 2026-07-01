@@ -3,7 +3,7 @@
 > 此文件供所有 AI Agent（CodeBuddy / TRAE / Claude / Cursor 等）读取，以快速理解项目全貌。
 > 每次重要变更后请更新本文档的"最后更新"日期和对应章节。
 
-**最后更新**：2026-06-30（多机器调度 + 真机验证）
+**最后更新**：2026-07-01（mypy 类型检查基线）
 
 ***
 
@@ -360,6 +360,7 @@ metrics = MetricsCalculator()
 python scripts/test_mock_api.py          # Mock API 功能测试
 python scripts/e2e_test.py              # 端到端集成测试
 python scripts/quick_train.py           # 快速训练验证（5000步）
+python -m mypy src scripts tests        # 类型检查（读取 mypy.ini）
 
 # ── 训练 ──
 python scripts/train_agent.py --config config/config.yaml       # DQN 训练
