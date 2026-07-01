@@ -155,7 +155,7 @@ def run_multi_seed():
 
     # 左图：mean ± std 曲线
     ax = axes[0]
-    for label, mean, std, color, matrix in [
+    for label, mean, std, color, _matrix in [
         ("PPO (无退火)", no_anneal_mean, no_anneal_std, "#3498db", no_anneal_matrix),
         ("PPO + 退火", with_anneal_mean, with_anneal_std, "#e74c3c", with_anneal_matrix),
     ]:
@@ -193,7 +193,7 @@ def run_multi_seed():
         x + width / 2, finals_anneal, width, label="PPO + 退火", color="#e74c3c", alpha=0.8
     )
 
-    for bar, val in zip(bars1, finals_no):
+    for bar, val in zip(bars1, finals_no, strict=False):
         ax.text(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height() + 20,
@@ -202,7 +202,7 @@ def run_multi_seed():
             fontsize=8,
             color="#3498db",
         )
-    for bar, val in zip(bars2, finals_anneal):
+    for bar, val in zip(bars2, finals_anneal, strict=False):
         ax.text(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height() + 20,

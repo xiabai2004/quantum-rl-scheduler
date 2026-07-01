@@ -242,7 +242,7 @@ def collect_mo_metrics(
 
         while not done:
             action, _ = agent.predict(obs, deterministic=True)
-            obs, reward, terminated, truncated, info = mo_env.step(action)
+            obs, reward, terminated, truncated, _info = mo_env.step(action)
             done = terminated or truncated
             ep_reward += reward
 

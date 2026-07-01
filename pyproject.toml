@@ -204,7 +204,7 @@ markers = [
     "unit: marks unit tests",
 ]
 timeout = 300
-timeout_method = "signal"
+timeout_method = "thread"
 
 # 覆盖率配置
 [tool.coverage.run]
@@ -242,3 +242,12 @@ end_of_line = "lf"
 charset = "utf-8"
 trim_trailing_whitespace = true
 insert_final_newline = true
+
+# =============================================================================
+# mutmut 配置 — Mutation Testing
+# =============================================================================
+[tool.mutmut]
+paths_to_mutate = ["src"]
+test_command = "python -m pytest tests/ --no-cov -x"
+runner = "pytest"
+target = 80

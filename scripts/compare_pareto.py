@@ -158,7 +158,7 @@ def plot_3d_scatter(
     ax = fig.add_subplot(111, projection="3d")
 
     # 绘制所有点
-    for i, (preset, color) in enumerate(colors_map.items()):
+    for _i, (preset, color) in enumerate(colors_map.items()):
         idxs = [j for j, lbl in enumerate(labels) if lbl == preset]
         if not idxs:
             continue
@@ -245,7 +245,7 @@ def plot_2d_projections(
             ]
         )
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
+    _fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
 
     projections = [
         (0, 1, "Throughput", "Balance", "Throughput vs Balance"),
@@ -333,7 +333,7 @@ def plot_radar(
     angles = [n / float(N) * 2 * np.pi for n in range(N)]
     angles += angles[:1]  # 闭合
 
-    fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(polar=True))
+    _fig, ax = plt.subplots(figsize=(8, 8), subplot_kw={"polar": True})
     colors_map = {
         "throughput_heavy": "#e74c3c",
         "balance_heavy": "#2ecc71",

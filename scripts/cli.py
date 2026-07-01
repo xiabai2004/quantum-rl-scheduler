@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
 量子RL调度系统 — 统一命令行入口
 Quantum RL Scheduler - Unified CLI
@@ -17,7 +16,6 @@ Usage:
     python scripts/cli.py demo
 """
 
-import os
 import sys
 from pathlib import Path
 
@@ -69,7 +67,7 @@ def train(
     """训练智能体"""
     import argparse
 
-    from scripts.training.train_agent import main, parse_args
+    from scripts.training.train_agent import main
 
     args_dict = {
         "timesteps": timesteps,

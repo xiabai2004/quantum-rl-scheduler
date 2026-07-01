@@ -26,6 +26,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import contextlib
+
 import numpy as np
 import yaml
 
@@ -82,10 +84,8 @@ def submit_and_wait(client: CqlibTianyanClient, qcis: str, name: str, shots: int
     if result["status"] == "completed":
         prob_str = result.get("result", "")
         prob = {}
-        try:
+        with contextlib.suppress(json.JSONDecodeError, TypeError):
             prob = json.loads(prob_str)
-        except (json.JSONDecodeError, TypeError):
-            pass
         return {
             "task_id": task_id,
             "success": True,

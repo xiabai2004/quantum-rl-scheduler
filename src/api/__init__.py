@@ -7,7 +7,7 @@ import os
 from typing import Any
 
 from src.api.mock_client import MockTianyanClient, create_tianyan_client
-from src.api.tianyan_client import TianyanAPIError, TianyanClient
+from src.api.tianyan_client import CircuitState, TianyanAPIError, TianyanClient
 from src.api.tianyan_cqlib import (
     CqlibTianyanClient,
     MultiMachineCqlibCoordinator,
@@ -15,6 +15,7 @@ from src.api.tianyan_cqlib import (
 )
 
 __all__ = [
+    "CircuitState",
     "CqlibTianyanClient",
     "MockTianyanClient",
     "MultiMachineCqlibCoordinator",

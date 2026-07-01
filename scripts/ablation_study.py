@@ -51,10 +51,7 @@ def _read_final_eval_reward(log_dir: str) -> float:
     try:
         data = np.load(str(eval_path))
         results = data["results"]
-        if results.ndim == 2:
-            last = np.mean(results[-1])
-        else:
-            last = float(results[-1])
+        last = np.mean(results[-1]) if results.ndim == 2 else float(results[-1])
         return float(last)
     except Exception:
         return 0.0
@@ -70,10 +67,7 @@ def _run_baseline_scheduler(env, seed, timesteps, strategy="random") -> float:
         elif strategy == "greedy":
             obs = env._get_observation()
             quantum_avail = obs[0]
-            if quantum_avail > 0.5:
-                action = 1
-            else:
-                action = 0
+            action = 1 if quantum_avail > 0.5 else 0
         else:
             action = 0
         _, reward, terminated, truncated, _ = env.step(action)
@@ -90,7 +84,7 @@ def _run_baseline_scheduler(env, seed, timesteps, strategy="random") -> float:
 
 def run_dim1_algorithm_ablation(
     timesteps: int = 30000,
-    seeds: list[int] = None,
+    seeds: list[int] | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """D1: 算法组件消融 — PPO+退火 → 纯PPO → 纯退火 → 随机基线"""
@@ -136,7 +130,7 @@ def run_dim1_algorithm_ablation(
 
         for seed in seeds:
             env = QuantumSchedulingEnv(max_steps=MAX_STEPS, seed=seed)
-            t0 = time.time()
+            time.time()
 
             if cfg["agent"] == "ppo" and cfg.get("use_annealing"):
                 agent = PPOAgent(
@@ -188,7 +182,7 @@ def run_dim1_algorithm_ablation(
 
 def run_dim2_state_space_ablation(
     timesteps: int = 30000,
-    seeds: list[int] = None,
+    seeds: list[int] | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """
@@ -284,7 +278,7 @@ def run_dim2_state_space_ablation(
 
 def run_dim3_reward_ablation(
     timesteps: int = 30000,
-    seeds: list[int] = None,
+    seeds: list[int] | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """
@@ -429,7 +423,7 @@ def _compute_alternative_reward(env, action: int, mode: str) -> float:
 
 def run_dim4_machine_scale_ablation(
     timesteps: int = 30000,
-    seeds: list[int] = None,
+    seeds: list[int] | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """
@@ -534,7 +528,7 @@ def run_dim4_machine_scale_ablation(
 
 def run_dim5_annealing_strategy_ablation(
     timesteps: int = 30000,
-    seeds: list[int] = None,
+    seeds: list[int] | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """

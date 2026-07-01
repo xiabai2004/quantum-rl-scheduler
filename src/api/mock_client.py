@@ -31,7 +31,7 @@ import random
 import time
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from loguru import logger
 
@@ -114,12 +114,12 @@ class MockTianyanClient:
     # 内部工具方法
     # ------------------------------------------------------------------
 
-    def _simulate_delay(self):
+    def _simulate_delay(self) -> None:
         """模拟网络延迟"""
         if self.mock_delay > 0:
             time.sleep(self.mock_delay)
 
-    def _maybe_fail(self, operation: str):
+    def _maybe_fail(self, operation: str) -> None:
         """按失败率随机抛出异常"""
         if random.random() < self.mock_failure_rate:
             from src.api.tianyan_client import TianyanAPIError
@@ -353,7 +353,7 @@ class MockTianyanClient:
                 raise ValueError(f"Mock 任务 {task_id} 尚未完成，当前状态: {task['status']}")
 
         logger.info(f"Mock 获取任务 {task_id} 结果成功")
-        return task["result"]
+        return cast(dict[str, Any], task["result"])
 
     # ------------------------------------------------------------------
     # 5. 列出可用量子后端（Mock）

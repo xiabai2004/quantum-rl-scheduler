@@ -14,6 +14,8 @@ Scheduler Engine Core Module
 - QuantumTask: env.py 中的量子任务数据结构
 """
 
+from typing import Any
+
 # 直接导入环境模块（不依赖 stable_baselines3）
 from src.scheduler.env import (
     DEFAULT_MACHINE_CONFIGS,
@@ -21,11 +23,9 @@ from src.scheduler.env import (
     QuantumMachine,
     QuantumResource,
     QuantumSchedulingEnv,
-)
-from src.scheduler.env import Task as EnvTask
-from src.scheduler.env import (
     register_env,
 )
+from src.scheduler.env import Task as EnvTask
 
 # SchedulerAgent 依赖 stable_baselines3，延迟导入
 try:
@@ -52,6 +52,10 @@ except ImportError:
     LegacyTaskParser = None  # type: ignore[assignment, misc]
 
 # 多目标奖励包装器
+MultiObjectiveRewardWrapper: Any | None = None
+make_mo_env: Any | None = None
+MO_DEFAULT_WEIGHTS: Any = {}
+
 try:
     from src.scheduler.multi_objective_env import DEFAULT_WEIGHTS as MO_DEFAULT_WEIGHTS
     from src.scheduler.multi_objective_env import (
@@ -59,9 +63,7 @@ try:
         make_mo_env,
     )
 except ImportError:
-    MultiObjectiveRewardWrapper = None  # type: ignore[assignment, misc]
-    make_mo_env = None  # type: ignore[assignment, misc]
-    MO_DEFAULT_WEIGHTS = {}  # type: ignore[assignment, misc]
+    pass
 
 # 向后兼容别名
 SchedulingEnv = QuantumSchedulingEnv

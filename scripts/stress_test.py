@@ -257,7 +257,7 @@ def run_stress_test():
 
     if not ppo_path:
         # 尝试从 logs 搜索
-        for root, dirs, files in os.walk(os.path.join(PROJECT_ROOT, "logs")):
+        for root, _dirs, files in os.walk(os.path.join(PROJECT_ROOT, "logs")):
             for f in files:
                 if f == "best_model.zip":
                     ppo_path = os.path.join(root, f)
@@ -360,7 +360,7 @@ def run_stress_test():
         bar_colors = [colors.get(n, "#7f8c8d") for n in sorted_names]
         bars = ax.bar(sorted_names, sorted_rewards, color=bar_colors)
 
-        for bar, val in zip(bars, sorted_rewards):
+        for bar, val in zip(bars, sorted_rewards, strict=False):
             y = bar.get_height()
             ax.text(
                 bar.get_x() + bar.get_width() / 2,

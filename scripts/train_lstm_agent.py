@@ -111,7 +111,7 @@ def main():
     print(f"\n[训练] 开始训练 {args.timesteps} 步...")
     start_time = datetime.now()
 
-    model = agent.train(
+    agent.train(
         total_timesteps=args.timesteps,
         eval_freq=args.eval_freq,
         n_eval_episodes=args.eval_episodes,

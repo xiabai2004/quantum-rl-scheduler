@@ -65,7 +65,7 @@ class CqlibTianyanClient:
         logger.info(f"[Cqlib] 客户端初始化，默认机器={machine_name}")
 
     @property
-    def platform(self):
+    def platform(self) -> Any:
         """懒加载平台连接"""
         if self._platform is None:
             self._platform = self.cqlib.TianYanPlatform(

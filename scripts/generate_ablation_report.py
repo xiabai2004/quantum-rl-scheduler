@@ -45,7 +45,7 @@ except Exception:
 # =========================================================================
 
 
-def generate_ablation_report(json_path: str, output_path: str = None) -> str:
+def generate_ablation_report(json_path: str, output_path: str | None = None) -> str:
     """
     从消融实验 JSON 生成学术级别的分析报告。
 
@@ -432,7 +432,7 @@ def _generate_charts(dimensions: dict, json_path: str) -> list[str]:
             colors = [f"C{i}" for i in range(len(ranges))]
             bars = ax.barh(dim_names, ranges, color=colors, alpha=0.8)
 
-            for bar, val, best_name in zip(bars, ranges, best_names):
+            for bar, val, best_name in zip(bars, ranges, best_names, strict=False):
                 ax.text(
                     bar.get_width() + max(ranges) * 0.02,
                     bar.get_y() + bar.get_height() / 2,

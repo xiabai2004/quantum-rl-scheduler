@@ -12,7 +12,7 @@ Utility Functions Module
 import json
 import os
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import yaml
@@ -24,7 +24,7 @@ def setup_logging(
     log_dir: str = "logs",
     log_level: str = "INFO",
     log_file: str = "scheduler.log",
-):
+) -> Any:
     """
     配置日志系统
 
@@ -71,13 +71,13 @@ def load_config(config_path: str = "config/config.yaml") -> dict[str, Any]:
         with open(config_path, encoding="utf-8") as f:
             config = yaml.safe_load(f)
         logger.info(f"配置文件加载成功：{config_path}")
-        return config
+        return cast(dict[str, Any], config)
     except Exception as e:
         logger.error(f"配置文件加载失败：{e}")
         return {}
 
 
-def save_config(config: dict[str, Any], config_path: str = "config/config.yaml"):
+def save_config(config: dict[str, Any], config_path: str = "config/config.yaml") -> None:
     """
     保存配置文件
 
@@ -122,7 +122,7 @@ def normalize_vector(
     normalized = (vec_array - min_v) / (max_v - min_v)
     normalized = normalized * (max_val - min_val) + min_val
 
-    return normalized.tolist()
+    return cast(list[float], normalized.tolist())
 
 
 def one_hot_encode(category: str, categories: list[str]) -> list[int]:
@@ -155,7 +155,7 @@ def calculate_average_wait_time(wait_times: list[float]) -> float:
     """计算平均等待时间"""
     if len(wait_times) == 0:
         return 0.0
-    return np.mean(wait_times)
+    return float(np.mean(wait_times))
 
 
 def calculate_resource_utilization(
@@ -195,7 +195,7 @@ def get_current_timestamp() -> str:
 
 
 # 数据保存/加载
-def save_json(data: Any, filepath: str):
+def save_json(data: Any, filepath: str) -> None:
     """
     保存为JSON文件
 

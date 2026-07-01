@@ -150,8 +150,8 @@ def main():
     try:
         task = test_parser()
         env = test_env(task)
-        agent = test_agent(env)
-        opt = test_annealing()
+        test_agent(env)
+        test_annealing()
 
         print(f"\n{'=' *60}")
         print("✓ 所有端到端测试通过！")

@@ -73,7 +73,7 @@ class TestQuantumAnnealingOptimizerInit(unittest.TestCase):
         opt = QuantumAnnealingOptimizer()
         self.assertEqual(opt._sim_initial_temp, 2.0)
         self.assertEqual(opt._sim_cooling_rate, 0.995)
-        self.assertEqual(opt._sim_num_sweeps, 2000)
+        self.assertEqual(opt._sim_num_sweeps, 200)
 
     def test_use_dw_flag_is_bool(self):
         """use_dw 标志应为布尔值（取决于 D-Wave SDK 是否可用）。"""
