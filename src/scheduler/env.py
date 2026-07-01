@@ -1160,7 +1160,7 @@ class QuantumSchedulingEnv(gym.Env):
         Returns:
             dict: 包含当前步数、统计摘要、资源状态、多机器调度详情等信息
         """
-        info = {
+        info: Dict[str, Any] = {
             "current_step": self._current_step,
             "max_steps": self._max_steps,
             "task_queue_length": len(self._task_queue),

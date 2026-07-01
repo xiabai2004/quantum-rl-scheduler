@@ -43,7 +43,7 @@ try:
         LegacyTaskParser,
     )
 except ImportError:
-    Task = EnvTask  # fallback to env Task
+    Task = EnvTask  # type: ignore[assignment, misc]  # fallback to env Task
     TaskBuilder = None  # type: ignore[assignment, misc]
     TaskParser = None  # type: ignore[assignment, misc]
     TaskFeatures = None  # type: ignore[assignment, misc]

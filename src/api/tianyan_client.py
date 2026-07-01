@@ -106,6 +106,7 @@ class TianyanClient:
 
         # cqlib 委托客户端（真实模式才创建，先置 None 保证属性始终存在）
         self._cqlib = None
+        self._mock_client: Any = None
 
         if self.mock_mode:
             # Mock 模式：创建 Mock 客户端并委托所有 API 调用
@@ -381,9 +382,12 @@ class TianyanClient:
             qcis_str = qcis or circuit_qasm
             if not qcis_str:
                 raise ValueError("真实模式需提供 qcis 或 circuit_qasm")
-            return self._cqlib.submit_quantum_task(
+            task_id = self._cqlib.submit_quantum_task(
                 qcis=qcis_str, shots=shots, task_name=task_name,
             )
+            if task_id is None:
+                raise TianyanAPIError(500, "cqlib did not return a task_id")
+            return task_id
 
         # deprecated REST 路径
         payload = {
