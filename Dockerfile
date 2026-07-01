@@ -3,8 +3,8 @@
 # Quantum RL Scheduler - Docker Image Build File
 #
 # 使用多阶段构建优化镜像大小：
-#   - 阶段1：安装依赖（构建依赖）
-#   - 阶段2：运行时环境（精简镜像）
+#   - 阶段1：安装 Docker 运行时依赖（不包含测试/Jupyter/代码质量工具）
+#   - 阶段2：只复制运行所需 Python 包和项目代码
 #
 # 构建镜像：
 #   docker build -t quantum-rl-scheduler:latest .
@@ -31,11 +31,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制依赖文件
-COPY requirements.txt .
+# 复制 Docker 专用运行时依赖文件
+COPY requirements-docker.txt .
 
-# 安装 Python 依赖（使用 pip 的缓存机制）
-RUN pip install --no-cache-dir --user -r requirements.txt
+# 安装 Python 运行时依赖。
+# requirements-docker.txt 不包含 pytest/black/mypy/jupyter 等开发工具，
+# 可以显著减少生产镜像体积。
+RUN pip install --no-cache-dir --user -r requirements-docker.txt
 
 # -----------------------------------------------------------------------------
 # 阶段2：运行时环境
@@ -49,11 +51,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# 安装运行时依赖（不需要编译的包）
+# 安装最小运行时系统依赖。
+# 健康检查使用 Python 标准库 urllib，不需要额外安装 curl。
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # 设置工作目录
@@ -76,7 +77,7 @@ EXPOSE 8000 6006
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/api/status || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/status', timeout=5).read()" || exit 1
 
 # 默认启动命令：启动 Web 服务
 CMD ["python", "-m", "uvicorn", "src.visualization.app:app", "--host", "0.0.0.0", "--port", "8000"]

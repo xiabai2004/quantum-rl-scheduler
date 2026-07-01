@@ -1,0 +1,48 @@
+# Docker 运行时依赖
+#
+# 该文件只保留 Web 服务、调度环境、Mock/真实 API 客户端和训练推理所需依赖。
+# 开发/测试工具（pytest、black、flake8、mypy、jupyter 等）仍保留在
+# requirements.txt，避免进入生产镜像。
+
+# 核心依赖
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+
+# 强化学习
+gymnasium>=0.28.0
+stable-baselines3>=2.0.0
+torch>=2.0.0
+
+# 量子计算
+qiskit>=1.0.0
+qiskit-aer>=0.14.0
+pennylane>=0.35.0
+
+# Web 框架
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.0.0
+
+# 数据可视化
+matplotlib>=3.7.0
+plotly>=5.17.0
+seaborn>=0.13.0
+
+# 数据库和缓存
+sqlalchemy>=2.0.0
+aiosqlite>=0.19.0
+redis>=5.0.0
+
+# HTTP 客户端
+requests>=2.31.0
+httpx>=0.25.0
+
+# 配置和日志
+python-dotenv>=1.0.0
+pyyaml>=6.0.0
+loguru>=0.7.0
+
+# 命令行/进度工具
+tqdm>=4.66.0
+click>=8.1.0

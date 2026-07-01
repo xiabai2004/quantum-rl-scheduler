@@ -4,7 +4,8 @@
 #
 # 包含以下服务：
 #   - web: FastAPI Web 服务（主应用）
-#   - tensorboard: TensorBoard 训练可视化（可选）
+#   - tensorboard: TensorBoard 训练可视化（可选，profile: monitoring）
+#   - redis: Redis 缓存和会话存储（可选，profile: cache/production）
 #
 # 使用方法：
 #   # 启动所有服务
@@ -38,13 +39,21 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
+      # 如需连接 compose 中的 Redis，可启动 cache profile 并取消下一行注释
+      # - REDIS_URL=redis://redis:6379/0
     volumes:
       # 持久化日志
       - ./logs:/app/logs
       # 持久化模型
       - ./models:/app/models
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/status"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/status', timeout=5).read()",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -80,7 +89,11 @@ services:
       - monitoring
 
   # ---------------------------------------------------------------------------
-  # Redis - 缓存和会话存储（可选，用于生产环境）
+  # Redis - 缓存和会话存储（可选）
+  #
+  # 启动方式：
+  #   docker-compose --profile cache up -d redis
+  #   docker-compose --profile cache up -d
   # ---------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
@@ -95,6 +108,7 @@ services:
       - quantum-rl-network
     # 仅在需要时启动
     profiles:
+      - cache
       - production
 
 # =============================================================================
