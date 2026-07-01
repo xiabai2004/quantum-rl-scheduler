@@ -17,32 +17,45 @@
 
 **量化目标：** 资源利用率提升 ≥30%，平均等待时间降低 ≥40%
 
-## 项目状态（v5）
+## 项目状态（v7）
 
 | 指标 | 数值 |
 |------|------|
-| 核心代码量 | ~9,500 行 Python |
-| 单元测试 | 67 用例全部通过 |
-| 真机验证 | 17 个量子任务成功提交天衍云 |
-| PPO vs FCFS | 提升 92.5% |
-| 多机器 PPO | 奖励 4,294（vs 单机 2,305，提升 +86.3%） |
+| 核心代码量 | ~11,000 行 Python（src/ 22 文件） |
+| 测试文件 | 14 个文件，100+ 测试用例 |
+| CI 强制覆盖率 | 60%（目标 80%） |
+| 真机验证 | 32 个量子任务成功提交天衍云 3 台超导量子计算机 |
+| PPO vs FCFS | 综合奖励提升 95.4% |
+| 多机器 MAPPO | 奖励 4,294（vs 单机 2,305，提升 +86.3%） |
+| 消融实验 | 五维度全量完成（D1-D5） |
+| 压力测试 | 4 种极限场景 PPO 综合稳定性最强 |
+| 工程韧性 | 熔断器 + 8类异常体系 + Prometheus 可观测性 |
+| 代码质量 | ruff(10类规则) + mypy(8项收紧) + bandit 安全扫描 |
+| 比赛材料 | PPT 15页 + 白皮书 10章 + 视频分镜脚本 6段 |
 
 ## 项目架构
 
 ```
 quantum-rl-scheduler/
-├── src/                      # 源代码
-│   ├── scheduler/            # RL调度引擎（env.py + agent.py + parser.py）
-│   ├── api/                  # 天衍云API封装（Mock/真实/cqlib 三模式）
-│   ├── quantum/              # 量子退火加速模块
+├── src/                      # 源代码（22 文件）
+│   ├── exceptions.py         # 统一异常体系（8 类）
+│   ├── scheduler/            # RL调度引擎（env + agent + parser + marl + multi_objective_env）
+│   ├── api/                  # 天衍云API封装（Mock/真实/cqlib 三模式 + 熔断器）
+│   ├── quantum/              # 量子退火加速模块（QUBO + 异步闭环）
 │   ├── visualization/        # FastAPI + Vue3 + Echarts 监控面板
-│   └── utils/                # 工具函数
-├── tests/                    # 67 个单元测试用例
-├── scripts/                  # 训练/仿真/对比脚本（21个）
-├── docs/                     # 团队文档（上手指南、Git规范、分工）
-├── config/                   # 系统配置
-├── .github/workflows/        # CI/CD 流水线
+│   └── utils/                # 工具函数 + Prometheus 指标
+├── tests/                    # 14 个测试文件，100+ 用例
+│   └── benchmarks/           # 性能基准测试
+├── scripts/                  # 按功能分区（training/evaluation/demo/testing/benchmarking/reporting）
+│   └── cli.py                # Click 统一命令行入口
+├── docs/                     # 团队文档（上手指南、Git规范、分工、协同开发）
+├── config/                   # 系统配置（config.yaml + .env.example）
+├── results/reports/          # 实验数据固化报告（4份）
+├── .github/workflows/        # CI/CD 4 Job 流水线 + PR 自动化
 ├── .devcontainer/            # VS Code 开发容器
+├── pyproject.toml            # 统一配置（Black/ruff/bandit/mypy/pytest/coverage/mutmut）
+├── mypy.ini                  # 类型检查（8项严格配置）
+├── .pre-commit-config.yaml   # Git commit 自动检查
 └── Dockerfile + compose      # 一键 Docker 部署
 ```
 
@@ -82,17 +95,20 @@ cp .env.example .env            # Mock 模式默认开启
 ### 验证环境
 
 ```bash
-# Mock API 测试
-python scripts/test_mock_api.py
+# CLI 统一入口
+python scripts/cli.py --help
 
 # 快速训练（5000步）
-python scripts/quick_train.py
+python scripts/cli.py train --timesteps 5000
 
 # 8种策略对比仿真（200任务）
-python scripts/run_simulation.py
+python scripts/cli.py simulate --num-tasks 200
 
 # 启动 Web 监控界面
-python -m uvicorn src.visualization.app:app --reload --port 8000
+python scripts/cli.py serve --port 8000
+
+# 运行全部测试
+pytest tests/ --cov=src
 ```
 
 ## Mock 模式（开发阶段默认）
@@ -115,51 +131,84 @@ TIANYAN_API_KEY=你的真实API密钥
 | 层级 | 技术 | 用途 |
 |------|------|------|
 | 语言 | Python 3.10+ | 全部开发 |
-| RL框架 | Stable-Baselines3 | PPO + Dueling DQN |
+| RL框架 | Stable-Baselines3 | PPO + DQN + MAPPO |
 | RL环境 | Gymnasium | 标准化调度环境 |
 | 深度学习 | PyTorch 2.0+ | 神经网络 |
 | 量子仿真 | Qiskit / PennyLane | 量子电路仿真 |
+| 量子真机 | 天衍云 cqlib SDK | 287量子比特超导处理器 |
 | 量子退火 | D-Wave dimod / neal | QUBO求解 |
 | Web后端 | FastAPI + Uvicorn | 监控API |
 | Web前端 | Vue3 + Echarts | 监控面板 |
-| 数据库 | SQLite / Redis | 任务持久化 |
+| CLI | Click | 统一命令行入口 |
 
 ## 团队基础设施
 
 | 工具 | 用途 |
 |------|------|
-| `pyproject.toml` | Black + isort + flake8 + mypy + pytest 统一配置 |
-| `.pre-commit-config.yaml` | Git commit 前自动格式检查 |
-| GitHub Actions CI | 自动 lint + test（3.10/3.11/3.12）+ mypy |
+| `pyproject.toml` | Black + ruff + bandit + mypy + pytest + coverage + mutmut 统一配置 |
+| `mypy.ini` | 8项严格类型检查（仅2模块暂时豁免） |
+| `.pre-commit-config.yaml` | Git commit 前自动格式检查 + Commit 格式校验 |
+| GitHub Actions CI | lint(ruff+bandit) + test(3.10/3.11/3.12矩阵) + typecheck(mypy) + benchmarks |
+| Dependabot | pip + GitHub Actions 自动依赖更新 |
 | VS Code Dev Container | 一键开发环境（Docker + 12+ 扩展） |
 | `setup.sh` / `setup.ps1` | 跨平台一键环境初始化 |
+
+## 工程韧性
+
+| 组件 | 功能 |
+|------|------|
+| `src/exceptions.py` | 8类统一异常（code + retryable 语义） |
+| `src/api/circuit_breaker.py` | 熔断器（CLOSED/OPEN/HALF_OPEN 三态） |
+| `src/utils/metrics.py` | 7个 Prometheus 指标（Gauge/Counter/Histogram） |
+| `scripts/cli.py` | Click 统一入口（train/simulate/serve/demo） |
 
 ## 核心功能
 
 | 模块 | 功能 | 状态 |
 |------|------|------|
-| 任务解析器 | 解析QASM量子任务，资源预估 | ✅ 已验证 |
-| RL智能体 | PPO + DQN 双算法调度决策 | ✅ 已验证 |
-| 调度环境 | Gymnasium 10维状态/3类动作 | ✅ 已验证 |
-| 天衍API | Mock/真实/cqlib 三模式自动切换 | ✅ 已验证 |
-| 量子退火 | QUBO映射 + 退火求解 | ✅ 已验证 |
-| 多机器调度 | 3台真机智能路由（v5） | ✅ 已验证 |
-| 真机验证 | 17个量子任务成功提交天衍云 | ✅ 已完成 |
-| Web可视化 | FastAPI + Vue3 + Echarts | ✅ 已验证 |
-| CI/CD | GitHub Actions 自动化测试 | ✅ 已配置 |
-| Docker部署 | 一键容器化部署 | ✅ 已配置 |
+| 任务解析器 | 解析QASM量子任务，资源预估 | 已验证 |
+| RL智能体 | PPO（主力）+ DQN（备选）+ MAPPO（多智能体） | 已验证 |
+| 调度环境 | 14维状态空间 / 3类动作 / 异质化任务 | 已验证 |
+| 天衍API | Mock / REST / cqlib 三模式 + 多机器协调器 | 已验证 |
+| 量子退火 | QUBO映射 + 退火求解 + 异步闭环 | 已验证 |
+| 多机器调度 | 3台真机MAPPO协同，奖励+86.3% | 已验证 |
+| 真机验证 | 32个量子任务成功提交，Mock偏差<5% | 已完成 |
+| Web可视化 | FastAPI + Vue3 + Echarts + WebSocket | 已验证 |
+| 可观测性 | Prometheus /metrics 端点 | 已验证 |
+| CI/CD | 4 Job流水线 + Codecov + Dependabot | 已配置 |
+| Docker部署 | 一键容器化部署 | 已配置 |
+
+## 实验成果
+
+| 实验 | 核心结论 |
+|------|---------|
+| 8策略对比 | PPO奖励2864 vs FCFS 1466，+95.4% |
+| 五维消融 | D4多机+86.3% > D1算法+95.4% > D5退火+6.4% > D2状态+2.1% |
+| 压力测试 | 4场景PPO综合稳定性最强；量子波动场景PPO +91.4% |
+| 真机验证 | 32任务100%成功率；Mock校准后偏差<5% |
+
+详见 `results/reports/` 目录。
+
+## 比赛材料
+
+| 材料 | 文件 |
+|------|------|
+| 答辩PPT（15页） | `../答辩PPT_量子RL调度系统.pptx` |
+| 技术白皮书（10章） | `../技术白皮书_量子RL调度系统_v2.docx` |
+| 演示视频分镜脚本 | `演示视频分镜脚本.md` |
+| 答辩PPT大纲 | `答辩PPT大纲.md` |
+| 白皮书更新计划 | `技术白皮书_更新计划.md` |
+| B1 实验数据报告 | `results/reports/` 下 4 份报告 |
 
 ## 开发计划
 
 | 里程碑 | 截止日期 | 内容 |
 |--------|----------|------|
-| M1 | 7/10 | 环境搭建与基础模块 |
-| M2 | 7/25 | 核心算法开发 |
-| M3 | 8/5 | 系统集成与可视化 |
-| M4 | 8/25 | 测试与真机验证 |
-| M5 | 9/15 | 文档完善与参赛提交 |
-
-详见 [docs/开发计划.md](docs/开发计划.md)
+| Track A 工程收尾 | 7/1 已完成 | pre-commit + scripts/ 重组 |
+| Track B 比赛材料 | 7/1 已完成 | PPT + 白皮书 + 视频脚本 + 实验数据 |
+| Track C 质量深化 | 7-8月 | mypy豁免清理 + 覆盖率80% + mutation testing |
+| PPO 真机闭环 | 7-8月 | cqlib 注入调度循环 |
+| M5 参赛提交 | 9/15 | 最终材料提交 |
 
 ## 文档索引
 
@@ -170,6 +219,7 @@ TIANYAN_API_KEY=你的真实API密钥
 | [Git工作流](docs/Git工作流.md) | 分支策略 + Commit规范 + PR流程 |
 | [团队分工](docs/团队分工.md) | 10人角色职责分配 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 + 代码规范 |
+| [AGENTS.md](AGENTS.md) | AI Agent 通用项目记忆 |
 
 ## 许可证
 

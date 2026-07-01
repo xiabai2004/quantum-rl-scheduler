@@ -19,6 +19,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Any, AsyncGenerator
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -121,19 +122,19 @@ task_queue: list[dict] = [
 class ConnectionManager:
     """管理所有 WebSocket 客户端连接"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.active_connections: list[WebSocket] = []
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket) -> None:
         await websocket.accept()
         self.active_connections.append(websocket)
 
-    def disconnect(self, websocket: WebSocket):
+    def disconnect(self, websocket: WebSocket) -> None:
         """断开 WebSocket 连接"""
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
 
-    async def broadcast(self, message: dict):
+    async def broadcast(self, message: dict) -> None:
         """向所有连接的客户端广播消息"""
         disconnected = []
         for connection in self.active_connections:
@@ -150,7 +151,7 @@ manager = ConnectionManager()
 
 
 @asynccontextmanager
-async def lifespan(app_instance: FastAPI):
+async def lifespan(app_instance: FastAPI) -> AsyncGenerator[None, None]:
     """应用生命周期：启动时开启后台模拟任务"""
     task = asyncio.create_task(simulate_scheduler())
     yield
@@ -177,7 +178,7 @@ FRONTEND_HTML_PATH = _os.path.join(_os.path.dirname(__file__), "frontend", "inde
 _VUE3_HTML_TEMPLATE = None
 
 
-def _load_vue3_template():
+def _load_vue3_template() -> str:
     """加载 Vue3 前端 HTML 模板"""
     global _VUE3_HTML_TEMPLATE
     if _VUE3_HTML_TEMPLATE is None:
@@ -190,7 +191,7 @@ def _load_vue3_template():
 
 
 @app.get("/", response_class=HTMLResponse)
-async def root():
+async def root() -> HTMLResponse:
     """返回监控面板 HTML 页面（Vue3 + Echarts 版本）"""
     return HTMLResponse(content=_load_vue3_template())
 
@@ -201,13 +202,13 @@ async def root():
 
 
 @app.get("/api/status")
-async def get_status():
+async def get_status() -> dict:
     """获取当前系统状态（JSON）"""
     return system_status
 
 
 @app.get("/api/real-machines")
-async def get_real_machines():
+async def get_real_machines() -> dict:
     """查询天衍云真实量子计算机状态（实时轮询 cqlib）。
 
     返回 ``[{id, type, status, name}]``，其中 status 为
@@ -223,7 +224,7 @@ async def get_real_machines():
 
 
 @app.get("/api/real-submissions")
-async def get_real_submissions():
+async def get_real_submissions() -> dict:
     """查询最近的真机提交记录（从 results/real_times.json 读取）。"""
     records = _load_real_submissions()
     return {
@@ -233,7 +234,7 @@ async def get_real_submissions():
 
 
 @app.get("/api/tasks")
-async def get_tasks(status: str | None = None):
+async def get_tasks(status: str | None = None) -> list[dict]:
     """
     获取任务列表
     - status=pending: 只返回等待中的任务
@@ -247,7 +248,7 @@ async def get_tasks(status: str | None = None):
 
 
 @app.post("/api/tasks")
-async def submit_task(task: TaskSubmit):
+async def submit_task(task: TaskSubmit) -> dict:
     """提交新任务"""
     new_task = {
         "task_id": "QTASK-" + uuid.uuid4().hex[:8],
@@ -276,7 +277,7 @@ async def submit_task(task: TaskSubmit):
 
 
 @app.get("/api/metrics")
-async def get_metrics():
+async def get_metrics() -> str:
     """返回 Prometheus 格式的指标（可选功能）"""
     lines = [
         "# HELP quantum_scheduler_qubit_utilization 量子比特利用率 0~1",
@@ -303,7 +304,7 @@ async def get_metrics():
 
 
 @app.post("/api/strategy")
-async def switch_strategy(strategy: str):
+async def switch_strategy(strategy: str) -> dict:
     """切换调度策略"""
     if strategy not in system_status["strategy_options"]:
         return {"message": f"未知策略: {strategy}", "success": False}
@@ -322,7 +323,7 @@ async def switch_strategy(strategy: str):
 
 
 @app.post("/api/update")
-async def update_status(update: SystemStatusUpdate):
+async def update_status(update: SystemStatusUpdate) -> dict:
     """更新系统状态（供调度引擎调用）"""
     system_status["qubit_utilization"] = update.qubit_utilization
     system_status["queue_length"] = update.queue_length
@@ -347,7 +348,7 @@ _ppo_model = None
 _ppo_env = None
 
 
-def _get_ppo_model():
+def _get_ppo_model() -> Any:
     """加载 PPO 模型（懒加载，避免启动时阻塞）"""
     global _ppo_model, _ppo_env
     if _ppo_model is None:
@@ -391,7 +392,7 @@ _real_cqlib_client = None
 _real_cqlib_checked = False
 
 
-def _get_real_cqlib_client():
+def _get_real_cqlib_client() -> Any:
     """懒加载天衍云 cqlib 客户端。
 
     从 .env 读取 TIANYAN_API_KEY，无 Key 时返回 None（降级为纯仿真展示）。
@@ -437,7 +438,7 @@ def _get_real_machines_status() -> list[dict]:
     if client is None:
         return []
     try:
-        return client.list_backends()
+        return client.list_backends()  # type: ignore[no-any-return]
     except Exception as e:
         print(f"[Web] 查询真机状态失败: {e}")
         return []
@@ -468,7 +469,7 @@ def _load_real_submissions() -> list[dict]:
 
 
 @app.get("/api/ppo/comparison")
-async def get_ppo_comparison():
+async def get_ppo_comparison() -> dict:
     """返回 PPO 与其他策略的对比数据（从 v4 报告中读取）"""
     report_dir = os.path.join(_PROJECT_ROOT, "results")
     json_files = sorted(
@@ -515,13 +516,15 @@ async def get_ppo_comparison():
 
 
 @app.get("/api/ppo/predict")
-async def ppo_predict():
+async def ppo_predict() -> dict:
     """使用 PPO 模型对当前环境状态进行一次推理预测"""
     model = _get_ppo_model()
     if model is None:
         return {"error": "PPO 模型未加载", "action": None, "confidence": 0}
 
     try:
+        if _ppo_env is None:
+            return {"error": "PPO 环境未初始化", "action": None}
         obs = _ppo_env.reset()[0]
         action, _states = model.predict(obs, deterministic=True)
 
@@ -537,7 +540,7 @@ async def ppo_predict():
 
 
 @app.get("/api/ppo/stats")
-async def ppo_stats():
+async def ppo_stats() -> dict:
     """返回 PPO 关键性能指标"""
     report_dir = os.path.join(_PROJECT_ROOT, "results")
     json_files = sorted(
@@ -595,7 +598,7 @@ async def ppo_stats():
 
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket) -> None:
     """
     WebSocket 实时推送端点
     客户端连接后，服务端会自动推送：
@@ -660,7 +663,7 @@ async def websocket_endpoint(websocket: WebSocket):
 # ============================================================
 
 
-async def simulate_scheduler():
+async def simulate_scheduler() -> None:
     """模拟调度引擎行为 — 使用 PPO 模型进行推理决策。
 
     每 3 秒推送一次状态更新。其中每 20 个 tick（约 60 秒）轮询一次天衍云
@@ -1519,7 +1522,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 # ============================================================
 
 
-def start_web_server(host: str = "0.0.0.0", port: int = 8000):
+def start_web_server(host: str = "0.0.0.0", port: int = 8000) -> None:
     """启动 Web 服务器"""
     import uvicorn
 

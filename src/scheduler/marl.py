@@ -142,7 +142,9 @@ class MultiAgentEnvWrapper:
             形状 (local_obs_dim * num_agents,) 的 float32 向量
         """
         local_obs = self.get_local_observations()
-        return np.concatenate([local_obs[name] for name in self.machine_names]).astype(np.float32)
+        return np.concatenate([local_obs[name] for name in self.machine_names]).astype(  # type: ignore[no-any-return]
+            np.float32
+        )
 
     # ------------------------------------------------------------------
     # 动作聚合与路由
@@ -361,7 +363,7 @@ class ActorNet(nn.Module):
             logits 张量，形状 (batch, action_dim)
         """
         features = self.feature(obs)
-        return self.action_head(features)
+        return self.action_head(features)  # type: ignore[no-any-return]
 
     def get_action(
         self, obs: torch.Tensor, deterministic: bool = False
@@ -435,7 +437,7 @@ class CentralizedCritic(nn.Module):
         Returns:
             价值张量，形状 (batch,)
         """
-        return self.net(global_state).squeeze(-1)
+        return self.net(global_state).squeeze(-1)  # type: ignore[no-any-return]
 
 
 # ---------------------------------------------------------------------------
@@ -749,7 +751,7 @@ class MultiAgentPPO:
         eval_freq: int = 5000,
         n_eval_episodes: int = 5,
         log_interval: int = 1,
-        **kwargs,
+        **kwargs: Any,
     ) -> MultiAgentPPO:
         """
         训练 MAPPO 智能体。
@@ -827,6 +829,10 @@ class MultiAgentPPO:
         self.buffer.reset()
         ep_rewards: list[float] = []
         cur_ep_reward = 0.0
+
+        # 确保在 train() 中已初始化
+        assert self._last_obs is not None, "必须先调用 train() 初始化观测"
+        assert self._last_global_state is not None, "必须先调用 train() 初始化全局状态"
 
         for _ in range(self.n_steps):
             actions, log_probs, value = self._sample_actions(self._last_obs)
