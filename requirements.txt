@@ -41,6 +41,7 @@ types-PyYAML>=6.0.12
 
 # 日志
 loguru>=0.7.0
+tensorboard>=2.14.0
 
 # 测试
 pytest>=7.4.0
