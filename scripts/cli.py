@@ -50,9 +50,22 @@ def cli():
 @click.option("--max-steps", type=int, default=500, help="每个 episode 的最大步数")
 @click.option("--learning-rate", type=float, default=3e-4, help="学习率")
 @click.option("--verbose", type=int, default=1, help="详细程度 0-2")
-def train(timesteps, resume, checkpoint, patience, eval_freq, eval_episodes,
-          save_path, log_dir, seed, seeds, max_qubits, max_steps,
-          learning_rate, verbose):
+def train(
+    timesteps,
+    resume,
+    checkpoint,
+    patience,
+    eval_freq,
+    eval_episodes,
+    save_path,
+    log_dir,
+    seed,
+    seeds,
+    max_qubits,
+    max_steps,
+    learning_rate,
+    verbose,
+):
     """训练智能体"""
     from scripts.training.train_agent import main, parse_args
     import argparse
@@ -87,8 +100,16 @@ def train(timesteps, resume, checkpoint, patience, eval_freq, eval_episodes,
 @click.option("--verbose", is_flag=True, help="打印详细日志")
 @click.option("--real-prob", type=float, default=0.0, help="真机抽样概率")
 @click.option("--real-machine", type=str, default="tianyan_s", help="真机抽样目标机器名")
-def simulate(episodes, tasks_per_episode, model_path, ppo_model_path,
-             output_dir, verbose, real_prob, real_machine):
+def simulate(
+    episodes,
+    tasks_per_episode,
+    model_path,
+    ppo_model_path,
+    output_dir,
+    verbose,
+    real_prob,
+    real_machine,
+):
     """运行仿真对比实验"""
     from scripts.evaluation.run_simulation import run_simulation
 
@@ -113,6 +134,7 @@ def serve(host, port, reload):
     try:
         import uvicorn
         from src.visualization.app import app
+
         click.echo(f"启动服务: http://{host}:{port}")
         click.echo("按 Ctrl+C 停止服务")
         uvicorn.run(app, host=host, port=port, reload=reload, log_level="info")
