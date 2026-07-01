@@ -37,9 +37,9 @@ def test_parser():
         task = parser.parse(task_dict)
 
         assert isinstance(task, Task), f"TaskParser 返回类型错误: {type(task)}"
-        assert hasattr(task, 'qubits_required'), "Task 缺少 qubits_required 属性"
-        assert hasattr(task, 'priority'), "Task 缺少 priority 属性"
-        assert hasattr(task, 'task_type'), "Task 缺少 task_type 属性"
+        assert hasattr(task, "qubits_required"), "Task 缺少 qubits_required 属性"
+        assert hasattr(task, "priority"), "Task 缺少 priority 属性"
+        assert hasattr(task, "task_type"), "Task 缺少 task_type 属性"
         assert task.qubits_required == 3, f"qubits_required 错误: {task.qubits_required}"
 
         print("  ✓ TaskParser 输出正确")
@@ -124,10 +124,7 @@ def test_annealing():
 
         opt = QuantumAnnealingOptimizer(num_qubits=2)
 
-        Q = np.array([
-            [-1, 0.5],
-            [0.5, -1]
-        ])
+        Q = np.array([[-1, 0.5], [0.5, -1]])
 
         bitstring = opt.anneal(Q)
 
@@ -172,6 +169,7 @@ def main():
         print("✗ 端到端测试失败")
         print(f"{'='*60}")
         import traceback
+
         traceback.print_exc()
         return 1
 

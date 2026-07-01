@@ -40,8 +40,14 @@ def step(title):
 
 def run_command(cmd, env=None):
     """运行命令并打印输出"""
-    result = subprocess.run(cmd, shell=True, cwd=str(PROJECT_ROOT), env=env or os.environ,
-                            capture_output=True, text=True)
+    result = subprocess.run(
+        cmd,
+        shell=True,
+        cwd=str(PROJECT_ROOT),
+        env=env or os.environ,
+        capture_output=True,
+        text=True,
+    )
     if result.returncode != 0:
         print(f"  ⚠️ 命令返回非零: {result.returncode}")
         if result.stderr:
@@ -85,29 +91,40 @@ def demo_report(args):
 
         report_dir = os.path.join(PROJECT_ROOT, "results")
         json_files = sorted(
-            [f for f in os.listdir(report_dir) if f.startswith("simulation_results_") and f.endswith(".json")],
+            [
+                f
+                for f in os.listdir(report_dir)
+                if f.startswith("simulation_results_") and f.endswith(".json")
+            ],
             reverse=True,
         )
 
         if json_files:
             import json
+
             with open(os.path.join(report_dir, json_files[0]), encoding="utf-8") as f:
                 data = json.load(f)
 
-            sorted_items = sorted(data.items(), key=lambda x: x[1].get("avg_reward", -9999), reverse=True)
+            sorted_items = sorted(
+                data.items(), key=lambda x: x[1].get("avg_reward", -9999), reverse=True
+            )
 
             print("\n  📊 策略排名：")
             for rank, (name, metrics) in enumerate(sorted_items, 1):
                 emoji = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else "  "
-                print(f"  {emoji} {rank}. {name:20s} | reward={metrics['avg_reward']:8.1f} | "
-                      f"wait={metrics['avg_wait_time']:6.1f}s | "
-                      f"completion={metrics['completion_rate']:.0%}")
+                print(
+                    f"  {emoji} {rank}. {name:20s} | reward={metrics['avg_reward']:8.1f} | "
+                    f"wait={metrics['avg_wait_time']:6.1f}s | "
+                    f"completion={metrics['completion_rate']:.0%}"
+                )
 
             ppo_item = next((v for k, v in sorted_items if "PPO" in k.upper()), None)
             random_item = data.get("Random", {})
             if ppo_item and random_item:
                 vs_random = ppo_item["avg_reward"] - random_item.get("avg_reward", 0)
-                print(f"\n  🏆 PPO vs Random: {vs_random:+.1f} ({vs_random/abs(random_item.get('avg_reward', 1))*100:.1f}%)")
+                print(
+                    f"\n  🏆 PPO vs Random: {vs_random:+.1f} ({vs_random/abs(random_item.get('avg_reward', 1))*100:.1f}%)"
+                )
 
             print("  ✅ 报告生成完成")
         else:
@@ -131,6 +148,7 @@ def demo_web(args):
     import uvicorn
 
     from src.visualization.app import app
+
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
 
 

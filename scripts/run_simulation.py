@@ -41,16 +41,18 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 
-
 # ---------------------------------------------------------------------------
 # 工具函数
 # ---------------------------------------------------------------------------
 
+
 def _setup_matplotlib_font():
     """配置 matplotlib 中文字体，避免方块乱码。"""
     import matplotlib
+
     matplotlib.use("Agg")  # 无头后端
     import matplotlib.pyplot as plt
+
     try:
         plt.rcParams["font.sans-serif"] = [
             "Noto Sans CJK SC",
@@ -68,6 +70,7 @@ def _setup_matplotlib_font():
 # ---------------------------------------------------------------------------
 # 仿真任务生成器（泊松到达 + 类型/比特/优先级随机）
 # ---------------------------------------------------------------------------
+
 
 class SimulationTaskGenerator:
     """
@@ -113,21 +116,24 @@ class SimulationTaskGenerator:
             )
             priority = int(self.rng.integers(1, 6))
             urgency = float(self.rng.uniform(0.0, 1.0))
-            tasks.append({
-                "task_id": f"SIM{self._task_counter:05d}",
-                "task_type": task_type,
-                "qubit_count": qubit_count,
-                "priority": priority,
-                "urgency": urgency,
-                "wait_steps": 0,
-                "execution_time": 0.0,
-            })
+            tasks.append(
+                {
+                    "task_id": f"SIM{self._task_counter:05d}",
+                    "task_type": task_type,
+                    "qubit_count": qubit_count,
+                    "priority": priority,
+                    "urgency": urgency,
+                    "wait_steps": 0,
+                    "execution_time": 0.0,
+                }
+            )
         return tasks
 
 
 # ---------------------------------------------------------------------------
 # 仿真环境（封装 QuantumSchedulingEnv 并注入自定义任务生成）
 # ---------------------------------------------------------------------------
+
 
 class SimulationEnv:
     """
@@ -212,10 +218,20 @@ class SimulationEnv:
                 float(np.mean(self._qubit_util_samples)) if self._qubit_util_samples else 0.0, 4
             ),
             "classical_utilization": round(
-                float(np.mean(self._classical_util_samples)) if self._classical_util_samples else 0.0, 4
+                (
+                    float(np.mean(self._classical_util_samples))
+                    if self._classical_util_samples
+                    else 0.0
+                ),
+                4,
             ),
             "avg_execution_time": round(
-                float(np.mean(self._execution_time_samples)) if self._execution_time_samples else 0.0, 4
+                (
+                    float(np.mean(self._execution_time_samples))
+                    if self._execution_time_samples
+                    else 0.0
+                ),
+                4,
             ),
         }
 
@@ -223,6 +239,7 @@ class SimulationEnv:
 # ---------------------------------------------------------------------------
 # 调度策略基类与具体实现
 # ---------------------------------------------------------------------------
+
 
 class BaseStrategy:
     """调度策略基类。"""
@@ -332,9 +349,9 @@ class GreedyStrategy(BaseStrategy):
 
     def select_action(self, obs: np.ndarray) -> int:
         # 解析观测向量
-        qubit_availability = obs[0]    # 量子比特可用率
-        classical_load = obs[4]        # 经典资源负载
-        urgency = obs[7]              # 任务紧急程度
+        qubit_availability = obs[0]  # 量子比特可用率
+        classical_load = obs[4]  # 经典资源负载
+        urgency = obs[7]  # 任务紧急程度
 
         # 贪心决策逻辑
         # 1. 紧急任务 + 量子资源充足 → 量子资源
@@ -388,6 +405,7 @@ class ShortestJobFirstStrategy(BaseStrategy):
 # ---------------------------------------------------------------------------
 # 单策略仿真运行
 # ---------------------------------------------------------------------------
+
 
 def run_strategy(
     env: SimulationEnv,
@@ -453,6 +471,7 @@ def run_strategy(
 # 可视化：生成对比柱状图
 # ---------------------------------------------------------------------------
 
+
 def plot_comparison(results: dict[str, dict[str, float]], output_path: str):
     """
     使用 matplotlib 生成策略对比柱状图，保存到 output_path。
@@ -482,7 +501,9 @@ def plot_comparison(results: dict[str, dict[str, float]], output_path: str):
     for ax_idx, (metric_key, metric_label) in enumerate(metrics):
         ax = axes[ax_idx]
         values = [results[s].get(metric_key, 0.0) for s in strategies]
-        bars = ax.bar(strategies, values, color=colors[: len(strategies)], edgecolor="white", linewidth=0.5)
+        bars = ax.bar(
+            strategies, values, color=colors[: len(strategies)], edgecolor="white", linewidth=0.5
+        )
 
         # 在柱子上方标注数值
         for bar, val in zip(bars, values, strict=False):
@@ -511,6 +532,7 @@ def plot_comparison(results: dict[str, dict[str, float]], output_path: str):
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
+
 
 def run_simulation(
     episodes: int = 100,
@@ -543,13 +565,18 @@ def run_simulation(
     print(f"  Tasks/Episode:      {tasks_per_episode}")
     print(f"  DQN Model Path:     {model_path or '(无，使用随机 DQN)'}")
     print(f"  PPO Model Path:     {ppo_model_path or '(无，不包含 PPO)'}")
-    print(f"  Real Prob:          {real_prob} (机器={real_machine})" if real_prob > 0 else "  Real Prob:          0 (纯仿真)")
+    print(
+        f"  Real Prob:          {real_prob} (机器={real_machine})"
+        if real_prob > 0
+        else "  Real Prob:          0 (纯仿真)"
+    )
     print(f"  Output Dir:         {output_dir}")
     print("=" * 64)
 
     # ---- 导入模块 ----
     try:
         from src.scheduler.env import QuantumSchedulingEnv
+
         print("[导入] 环境模块加载成功")
     except ImportError as e:
         print(f"[错误] 环境模块导入失败: {e}")
@@ -558,6 +585,7 @@ def run_simulation(
 
     try:
         from stable_baselines3 import DQN
+
         print("[导入] Stable-Baselines3 DQN 加载成功")
     except ImportError as e:
         print(f"[错误] stable_baselines3 未安装: {e}")
@@ -568,6 +596,7 @@ def run_simulation(
     real_client = None
     if real_prob > 0:
         from dotenv import load_dotenv
+
         load_dotenv()
         api_key = os.getenv("TIANYAN_API_KEY", "")
         if not api_key:
@@ -576,6 +605,7 @@ def run_simulation(
         else:
             try:
                 from src.api.tianyan_cqlib import CqlibTianyanClient
+
                 real_client = CqlibTianyanClient(
                     login_key=api_key,
                     machine_name=real_machine,
@@ -600,6 +630,7 @@ def run_simulation(
         print(f"[DQN] 加载已训练模型: {model_path}")
         dqn_env = QuantumSchedulingEnv(**base_env_kwargs)
         from src.scheduler.agent import SchedulerAgent
+
         agent = SchedulerAgent(env=dqn_env)
         agent.load(model_path)
         dqn_model = agent.model
@@ -641,6 +672,7 @@ def run_simulation(
     if ppo_model_path and os.path.isfile(ppo_model_path):
         print(f"[PPO] 加载已训练模型: {ppo_model_path}")
         from stable_baselines3 import PPO
+
         ppo_env = QuantumSchedulingEnv(**base_env_kwargs)
         ppo_model = PPO.load(ppo_model_path, env=ppo_env)
         strategies.append(PPOStrategy(ppo_model))
@@ -741,6 +773,7 @@ def run_simulation(
 # ---------------------------------------------------------------------------
 # 命令行入口
 # ---------------------------------------------------------------------------
+
 
 def main():
     parser = argparse.ArgumentParser(

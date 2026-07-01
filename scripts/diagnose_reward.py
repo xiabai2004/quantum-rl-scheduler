@@ -53,5 +53,6 @@ def diagnose_reward():
 
     return total
 
+
 if __name__ == "__main__":
     diagnose_reward()

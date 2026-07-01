@@ -21,10 +21,10 @@ from src.scheduler.env import (
     QuantumMachine,
     QuantumResource,
     QuantumSchedulingEnv,
-    register_env,
 )
+from src.scheduler.env import Task as EnvTask
 from src.scheduler.env import (
-    Task as EnvTask,
+    register_env,
 )
 
 # SchedulerAgent 依赖 stable_baselines3，延迟导入
@@ -53,9 +53,7 @@ except ImportError:
 
 # 多目标奖励包装器
 try:
-    from src.scheduler.multi_objective_env import (
-        DEFAULT_WEIGHTS as MO_DEFAULT_WEIGHTS,
-    )
+    from src.scheduler.multi_objective_env import DEFAULT_WEIGHTS as MO_DEFAULT_WEIGHTS
     from src.scheduler.multi_objective_env import (
         MultiObjectiveRewardWrapper,
         make_mo_env,

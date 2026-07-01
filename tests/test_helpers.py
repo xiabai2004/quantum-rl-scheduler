@@ -19,7 +19,7 @@ import tempfile
 import unittest
 from datetime import datetime
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.utils.helpers import (
     MetricsCalculator,
@@ -410,47 +410,37 @@ class TestMetricsCalculator(unittest.TestCase):
         # avg_wait=50, max=100 → normalized_wait = 1 - 0.5 = 0.5
         # reward = 0.4*1 + 0.3*0.5 + 0.3*1 = 0.4+0.15+0.3 = 0.85
         reward = MetricsCalculator.calculate_reward(
-            completion_rate=1.0, avg_wait_time=50.0,
-            resource_utilization=1.0, max_wait_time=100.0,
+            completion_rate=1.0,
+            avg_wait_time=50.0,
+            resource_utilization=1.0,
+            max_wait_time=100.0,
         )
         self.assertAlmostEqual(reward, 0.85)
 
     def test_improvement_positive(self):
         """正改进应返回正百分比。"""
-        self.assertAlmostEqual(
-            MetricsCalculator.calculate_improvement(120.0, 100.0), 20.0
-        )
+        self.assertAlmostEqual(MetricsCalculator.calculate_improvement(120.0, 100.0), 20.0)
 
     def test_improvement_negative(self):
         """负改进应返回负百分比。"""
-        self.assertAlmostEqual(
-            MetricsCalculator.calculate_improvement(80.0, 100.0), -20.0
-        )
+        self.assertAlmostEqual(MetricsCalculator.calculate_improvement(80.0, 100.0), -20.0)
 
     def test_improvement_baseline_zero_new_zero(self):
         """基线与新值均为 0 应返回 0。"""
-        self.assertAlmostEqual(
-            MetricsCalculator.calculate_improvement(0.0, 0.0), 0.0
-        )
+        self.assertAlmostEqual(MetricsCalculator.calculate_improvement(0.0, 0.0), 0.0)
 
     def test_improvement_baseline_zero_new_nonzero(self):
         """基线为 0、新值非 0 应返回 100。"""
-        self.assertAlmostEqual(
-            MetricsCalculator.calculate_improvement(5.0, 0.0), 100.0
-        )
+        self.assertAlmostEqual(MetricsCalculator.calculate_improvement(5.0, 0.0), 100.0)
 
     def test_improvement_negative_baseline(self):
         """负基线应正确计算改进百分比。"""
         # (10 - (-10)) / |-10| * 100 = 200
-        self.assertAlmostEqual(
-            MetricsCalculator.calculate_improvement(10.0, -10.0), 200.0
-        )
+        self.assertAlmostEqual(MetricsCalculator.calculate_improvement(10.0, -10.0), 200.0)
 
     def test_improvement_no_change(self):
         """新值等于基线应返回 0。"""
-        self.assertAlmostEqual(
-            MetricsCalculator.calculate_improvement(50.0, 50.0), 0.0
-        )
+        self.assertAlmostEqual(MetricsCalculator.calculate_improvement(50.0, 50.0), 0.0)
 
 
 # ============================================================
@@ -473,9 +463,7 @@ class TestAdditionalUtils(unittest.TestCase):
 
     def test_average_wait_time_normal(self):
         """正常平均等待时间。"""
-        self.assertAlmostEqual(
-            calculate_average_wait_time([10.0, 20.0, 30.0]), 20.0
-        )
+        self.assertAlmostEqual(calculate_average_wait_time([10.0, 20.0, 30.0]), 20.0)
 
     def test_average_wait_time_empty(self):
         """空列表应返回 0。"""

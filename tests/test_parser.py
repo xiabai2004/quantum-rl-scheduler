@@ -17,7 +17,7 @@ import unittest
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.scheduler.parser import (
     MAX_CIRCUIT_DEPTH,
@@ -26,17 +26,18 @@ from src.scheduler.parser import (
     PRIORITY_MAP,
     PRIORITY_REVERSE,
     LegacyTaskParser,
+)
+from src.scheduler.parser import Task as ParserTask
+from src.scheduler.parser import (
     TaskBuilder,
     TaskFeatures,
     TaskParser,
-)
-from src.scheduler.parser import (
-    Task as ParserTask,
 )
 
 # ============================================================
 # Task 数据类
 # ============================================================
+
 
 class TestTask(unittest.TestCase):
     """测试 Task 规范化任务数据类。"""
@@ -90,6 +91,7 @@ class TestTask(unittest.TestCase):
 # ============================================================
 # TaskBuilder
 # ============================================================
+
 
 class TestTaskBuilder(unittest.TestCase):
     """测试 Task Builder 模式构造器。"""
@@ -260,9 +262,7 @@ class TestTaskBuilder(unittest.TestCase):
 
     def test_from_dict_priority_int(self):
         """from_dict 应接受整数 priority。"""
-        task = TaskBuilder.from_dict(
-            {"task_id": "x", "type": "classical", "priority": 3}
-        ).build()
+        task = TaskBuilder.from_dict({"task_id": "x", "type": "classical", "priority": 3}).build()
         self.assertEqual(task.priority, 3)
 
     def test_from_dict_defaults_when_missing(self):
@@ -278,6 +278,7 @@ class TestTaskBuilder(unittest.TestCase):
 # ============================================================
 # TaskParser
 # ============================================================
+
 
 class TestTaskParser(unittest.TestCase):
     """测试新版任务解析器 TaskParser。"""
@@ -364,8 +365,13 @@ class TestTaskParser(unittest.TestCase):
     def test_parse_classical_allows_large_qubits(self):
         """经典任务不受量子比特上限约束。"""
         task = self.parser.parse(
-            {"task_id": "x", "type": "classical", "qubits_required": 999,
-             "estimated_time": 1, "priority": 2}
+            {
+                "task_id": "x",
+                "type": "classical",
+                "qubits_required": 999,
+                "estimated_time": 1,
+                "priority": 2,
+            }
         )
         self.assertEqual(task.qubits_required, 999)
 
@@ -493,8 +499,13 @@ class TestTaskParser(unittest.TestCase):
     def test_estimate_resources_classical(self):
         """经典任务经典计算占比应为 1.0。"""
         task = self.parser.parse(
-            {"task_id": "c1", "type": "classical", "qubits_required": 0,
-             "estimated_time": 60, "priority": 2}
+            {
+                "task_id": "c1",
+                "type": "classical",
+                "qubits_required": 0,
+                "estimated_time": 60,
+                "priority": 2,
+            }
         )
         res = self.parser.estimate_resources(task)
         self.assertEqual(res["classical_compute_ratio"], 1.0)
@@ -502,8 +513,13 @@ class TestTaskParser(unittest.TestCase):
     def test_estimate_resources_hybrid(self):
         """混合任务经典计算占比应为 0.5。"""
         task = self.parser.parse(
-            {"task_id": "h1", "type": "hybrid", "qubits_required": 4,
-             "estimated_time": 60, "priority": 2}
+            {
+                "task_id": "h1",
+                "type": "hybrid",
+                "qubits_required": 4,
+                "estimated_time": 60,
+                "priority": 2,
+            }
         )
         res = self.parser.estimate_resources(task)
         self.assertEqual(res["classical_compute_ratio"], 0.5)
@@ -511,8 +527,14 @@ class TestTaskParser(unittest.TestCase):
     def test_estimate_resources_large_qubits_sparse_path(self):
         """qubits>30 应走稀疏内存估算分支。"""
         task = self.parser.parse(
-            {"task_id": "big", "type": "quantum", "qubits_required": 50,
-             "circuit_depth": 100, "estimated_time": 10, "priority": 2}
+            {
+                "task_id": "big",
+                "type": "quantum",
+                "qubits_required": 50,
+                "circuit_depth": 100,
+                "estimated_time": 10,
+                "priority": 2,
+            }
         )
         res = self.parser.estimate_resources(task)
         # 稀疏分支 memory_mb = depth * qubits * 0.001 = 100*50*0.001 = 5.0
@@ -530,8 +552,13 @@ class TestTaskParser(unittest.TestCase):
     def test_estimate_resources_no_depth_no_shots(self):
         """circuit_depth/shots 为 None 时应使用 0/1 默认。"""
         task = self.parser.parse(
-            {"task_id": "n1", "type": "quantum", "qubits_required": 4,
-             "estimated_time": 10, "priority": 2}
+            {
+                "task_id": "n1",
+                "type": "quantum",
+                "qubits_required": 4,
+                "estimated_time": 10,
+                "priority": 2,
+            }
         )
         res = self.parser.estimate_resources(task)
         self.assertEqual(res["total_gate_operations"], 0)
@@ -539,8 +566,11 @@ class TestTaskParser(unittest.TestCase):
     def test_estimate_resources_unknown_priority_default_factor(self):
         """未知 priority 应使用默认排队因子 1.0（validate 不阻断执行）。"""
         task = ParserTask(
-            task_id="u1", task_type="classical", qubits_required=2,
-            estimated_time=10.0, priority=5,
+            task_id="u1",
+            task_type="classical",
+            qubits_required=2,
+            estimated_time=10.0,
+            priority=5,
         )
         with patch("sys.stderr"):
             res = self.parser.estimate_resources(task)
@@ -563,8 +593,13 @@ class TestTaskParser(unittest.TestCase):
     def test_to_internal_format_without_deadline(self):
         """无 deadline 时 deadline 字段应为 None。"""
         task = self.parser.parse(
-            {"task_id": "nd", "type": "quantum", "qubits_required": 4,
-             "estimated_time": 10, "priority": 2}
+            {
+                "task_id": "nd",
+                "type": "quantum",
+                "qubits_required": 4,
+                "estimated_time": 10,
+                "priority": 2,
+            }
         )
         internal = self.parser.to_internal_format(task)
         self.assertIsNone(internal["deadline"])
@@ -574,8 +609,14 @@ class TestTaskParser(unittest.TestCase):
         """过去 deadline 时紧迫度应保持 1.0（remaining<=0 分支）。"""
         past = (datetime.now() - timedelta(hours=1)).isoformat()
         task = self.parser.parse(
-            {"task_id": "pd", "type": "quantum", "qubits_required": 4,
-             "estimated_time": 10, "priority": 2, "deadline": past}
+            {
+                "task_id": "pd",
+                "type": "quantum",
+                "qubits_required": 4,
+                "estimated_time": 10,
+                "priority": 2,
+                "deadline": past,
+            }
         )
         internal = self.parser.to_internal_format(task)
         self.assertIsInstance(internal["deadline"], str)
@@ -584,8 +625,13 @@ class TestTaskParser(unittest.TestCase):
         """所有 priority 都应有对应 label。"""
         for p, label in PRIORITY_REVERSE.items():
             task = self.parser.parse(
-                {"task_id": "x", "type": "quantum", "qubits_required": 4,
-                 "estimated_time": 10, "priority": p}
+                {
+                    "task_id": "x",
+                    "type": "quantum",
+                    "qubits_required": 4,
+                    "estimated_time": 10,
+                    "priority": p,
+                }
             )
             internal = self.parser.to_internal_format(task)
             self.assertEqual(internal["priority_label"], label)
@@ -594,6 +640,7 @@ class TestTaskParser(unittest.TestCase):
 # ============================================================
 # TaskFeatures
 # ============================================================
+
 
 class TestTaskFeatures(unittest.TestCase):
     """测试 TaskFeatures 特征向量与 to_vector。"""
@@ -656,7 +703,9 @@ class TestTaskFeatures(unittest.TestCase):
     def test_to_vector_with_deadline(self):
         """带 deadline 应计算剩余时间特征（>0）。"""
         f = TaskFeatures(
-            task_id="t", user_id="u", task_type="quantum",
+            task_id="t",
+            user_id="u",
+            task_type="quantum",
             deadline=datetime.now() + timedelta(days=2),
         )
         v = f.to_vector(20)
@@ -685,6 +734,7 @@ class TestTaskFeatures(unittest.TestCase):
 # ============================================================
 # LegacyTaskParser
 # ============================================================
+
 
 class TestLegacyTaskParser(unittest.TestCase):
     """测试旧版任务解析器 LegacyTaskParser。"""
@@ -799,6 +849,7 @@ class TestLegacyTaskParser(unittest.TestCase):
 # ============================================================
 # QASM 解析边界
 # ============================================================
+
 
 class TestQasmParsing(unittest.TestCase):
     """测试 QASM 解析的边界与异常输入。"""

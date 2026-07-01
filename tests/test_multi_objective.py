@@ -209,9 +209,16 @@ class TestMultiObjectiveWrapper(unittest.TestCase):
         env = self.mo_env.env.unwrapped
         # 创建等待时间很长的任务
         from src.scheduler.env import Task as EnvTask
+
         env._task_queue = [
-            EnvTask(task_id=99, task_type="universal", priority=1, urgency=0.5,
-                    wait_steps=MAX_WAIT_STEPS * 2, qubit_count=5)
+            EnvTask(
+                task_id=99,
+                task_type="universal",
+                priority=1,
+                urgency=0.5,
+                wait_steps=MAX_WAIT_STEPS * 2,
+                qubit_count=5,
+            )
         ]
         quality = self.mo_env._compute_quality()
         self.assertLess(quality, -0.5)  # 应该显著为负
@@ -229,9 +236,16 @@ class TestMultiObjectiveWrapper(unittest.TestCase):
         env._quantum.available_ratio = 0.6
         env._classical.load = 0.4
         from src.scheduler.env import Task as EnvTask
+
         env._task_queue = [
-            EnvTask(task_id=1, task_type="universal", priority=1, urgency=0.5,
-                    wait_steps=10, qubit_count=5)
+            EnvTask(
+                task_id=1,
+                task_type="universal",
+                priority=1,
+                urgency=0.5,
+                wait_steps=10,
+                qubit_count=5,
+            )
         ]
 
         # 手动计算目标值
@@ -398,8 +412,16 @@ class TestMultiObjectiveWrapper(unittest.TestCase):
                 weight_preset=preset,
                 seed=42,
             )
-            agent = PPOAgent(mo_env, learning_rate=3e-4, n_steps=128,
-                            batch_size=32, n_epochs=3, gamma=0.99, verbose=0, seed=42)
+            agent = PPOAgent(
+                mo_env,
+                learning_rate=3e-4,
+                n_steps=128,
+                batch_size=32,
+                n_epochs=3,
+                gamma=0.99,
+                verbose=0,
+                seed=42,
+            )
             agent.train(total_timesteps=300)
             eval_result = agent.evaluate(num_episodes=2, deterministic=True)
             self.assertIn("mean_reward", eval_result, f"预设 {preset} 评估失败")

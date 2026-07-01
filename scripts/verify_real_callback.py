@@ -7,6 +7,7 @@
 用法：
     python scripts/verify_real_callback.py
 """
+
 import json
 import os
 import sys
@@ -87,8 +88,10 @@ def main():
     print(f"总记录数: {len(records)}")
     print(f"成功提交: {len(submitted)}")
     for r in records:
-        print(f"  step={r['step']} machine={r['machine']} status={r['status']} "
-              f"tid={r.get('real_task_id')} latency={r['latency_s']}s")
+        print(
+            f"  step={r['step']} machine={r['machine']} status={r['status']} "
+            f"tid={r.get('real_task_id')} latency={r['latency_s']}s"
+        )
 
     # 验收：至少 1 个真机任务被提交 + JSON 已保存
     ok_submit = len(submitted) >= 1

@@ -81,96 +81,135 @@ def parse_args():
     # 训练参数
     training = parser.add_argument_group("训练参数")
     training.add_argument(
-        "--timesteps", type=int, default=50000,
+        "--timesteps",
+        type=int,
+        default=50000,
         help="训练总步数（默认: 50000）",
     )
     training.add_argument(
-        "--n-steps", type=int, default=1024,
+        "--n-steps",
+        type=int,
+        default=1024,
         help="每次 rollout 收集的步数（默认: 1024）",
     )
     training.add_argument(
-        "--batch-size", type=int, default=64,
+        "--batch-size",
+        type=int,
+        default=64,
         help="小批量大小（默认: 64）",
     )
     training.add_argument(
-        "--n-epochs", type=int, default=10,
+        "--n-epochs",
+        type=int,
+        default=10,
         help="每次更新的 epoch 数（默认: 10）",
     )
     training.add_argument(
-        "--learning-rate", type=float, default=3e-4,
+        "--learning-rate",
+        type=float,
+        default=3e-4,
         help="学习率（默认: 3e-4）",
     )
     training.add_argument(
-        "--gamma", type=float, default=0.99,
+        "--gamma",
+        type=float,
+        default=0.99,
         help="折扣因子（默认: 0.99）",
     )
     training.add_argument(
-        "--gae-lambda", type=float, default=0.95,
+        "--gae-lambda",
+        type=float,
+        default=0.95,
         help="GAE lambda 参数（默认: 0.95）",
     )
     training.add_argument(
-        "--clip-range", type=float, default=0.2,
+        "--clip-range",
+        type=float,
+        default=0.2,
         help="PPO 裁剪范围（默认: 0.2）",
     )
     training.add_argument(
-        "--ent-coef", type=float, default=0.01,
+        "--ent-coef",
+        type=float,
+        default=0.01,
         help="熵正则系数（默认: 0.01）",
     )
     training.add_argument(
-        "--max-steps", type=int, default=500,
+        "--max-steps",
+        type=int,
+        default=500,
         help="单个 episode 最大步数（默认: 500）",
     )
 
     # 机器配置参数
     machine_group = parser.add_argument_group("机器配置")
     machine_group.add_argument(
-        "--single-machine", action="store_true",
+        "--single-machine",
+        action="store_true",
         help="单机模式（退化为单 Agent PPO，用于基线对比）",
     )
     machine_group.add_argument(
-        "--num-machines", type=int, default=3,
+        "--num-machines",
+        type=int,
+        default=3,
         help="自定义机器数量（1-3，从 DEFAULT_MACHINE_CONFIGS 截取）",
     )
 
     # 评估参数
     evaluation = parser.add_argument_group("评估参数")
     evaluation.add_argument(
-        "--eval-freq", type=int, default=5000,
+        "--eval-freq",
+        type=int,
+        default=5000,
         help="评估频率，每隔多少步评估一次（默认: 5000）",
     )
     evaluation.add_argument(
-        "--eval-episodes", type=int, default=10,
+        "--eval-episodes",
+        type=int,
+        default=10,
         help="每次评估的 episode 数（默认: 10）",
     )
 
     # 输出参数
     output = parser.add_argument_group("输出参数")
     output.add_argument(
-        "--save-path", type=str, default="./models/mappo",
+        "--save-path",
+        type=str,
+        default="./models/mappo",
         help="模型保存路径（默认: ./models/mappo）",
     )
     output.add_argument(
-        "--log-dir", type=str, default="./logs/marl/",
+        "--log-dir",
+        type=str,
+        default="./logs/marl/",
         help="TensorBoard/训练日志目录（默认: ./logs/marl/）",
     )
     output.add_argument(
-        "--results-dir", type=str, default="./results",
+        "--results-dir",
+        type=str,
+        default="./results",
         help="评估结果保存目录（默认: ./results）",
     )
     output.add_argument(
-        "--seed", type=int, default=42,
+        "--seed",
+        type=int,
+        default=42,
         help="随机种子（默认: 42）",
     )
     output.add_argument(
-        "--verbose", type=int, default=1,
+        "--verbose",
+        type=int,
+        default=1,
         help="日志详细程度 0=静默 1=进度（默认: 1）",
     )
     output.add_argument(
-        "--no-save", action="store_true",
+        "--no-save",
+        action="store_true",
         help="不保存模型（仅训练用于快速验证）",
     )
     output.add_argument(
-        "--no-eval", action="store_true",
+        "--no-eval",
+        action="store_true",
         help="训练后不进行评估",
     )
 
@@ -278,19 +317,17 @@ def main():
             deterministic=True,
         )
         eval_duration = time.time() - eval_start
-        print(f"评估结果 ({eval_result['num_episodes']} episodes, "
-              f"耗时 {eval_duration:.1f}s):")
-        print(f"  平均奖励 : {eval_result['mean_reward']:.2f} "
-              f"± {eval_result['std_reward']:.2f}")
+        print(f"评估结果 ({eval_result['num_episodes']} episodes, " f"耗时 {eval_duration:.1f}s):")
+        print(
+            f"  平均奖励 : {eval_result['mean_reward']:.2f} " f"± {eval_result['std_reward']:.2f}"
+        )
         print(f"  成功率   : {eval_result['success_rate'] * 100:.1f}%")
 
         # 保存评估结果
         os.makedirs(args.results_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         mode_tag = "single" if args.single_machine else f"multi{env.num_machines}"
-        results_path = os.path.join(
-            args.results_dir, f"mappo_eval_{mode_tag}_{timestamp}.json"
-        )
+        results_path = os.path.join(args.results_dir, f"mappo_eval_{mode_tag}_{timestamp}.json")
         result_data: dict[str, Any] = {
             "timestamp": timestamp,
             "mode": "single_machine" if args.single_machine else "multi_machine",

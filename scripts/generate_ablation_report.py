@@ -34,9 +34,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 # 中文字体配置
 try:
-    plt.rcParams["font.sans-serif"] = [
-        "Microsoft YaHei", "SimHei", "DejaVu Sans"
-    ]
+    plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
     plt.rcParams["axes.unicode_minus"] = False
 except Exception:
     pass
@@ -45,6 +43,7 @@ except Exception:
 # =========================================================================
 # 报告生成核心
 # =========================================================================
+
 
 def generate_ablation_report(json_path: str, output_path: str = None) -> str:
     """
@@ -152,16 +151,19 @@ def _build_dimension_details(dimensions: dict) -> str:
     }
 
     dim_descriptions = {
-        "D1": ("逐步移除算法组件（退火 → PPO → 量子），"
-               "量化每个核心模块的边际贡献。"),
-        "D2": ("从完整10维观测逐步裁剪到3维基线，"
-               "分析增加状态信息的边际效益是否递减。"),
-        "D3": ("对比四种奖励函数设计（标准/加速比加权/公平性/能耗感知），"
-               "验证哪种设计最有利于学习效率。"),
-        "D4": ("从单台287q机器扩展到三台异构机器集群，"
-               "量化多机器调度带来的吞吐量提升和边际递减效应。"),
-        "D5": ("对比无退火/模拟退火/真机退火三种策略，"
-               "量化退火加速对RL收敛速度和最终质量的增益。"),
+        "D1": ("逐步移除算法组件（退火 → PPO → 量子），" "量化每个核心模块的边际贡献。"),
+        "D2": ("从完整10维观测逐步裁剪到3维基线，" "分析增加状态信息的边际效益是否递减。"),
+        "D3": (
+            "对比四种奖励函数设计（标准/加速比加权/公平性/能耗感知），"
+            "验证哪种设计最有利于学习效率。"
+        ),
+        "D4": (
+            "从单台287q机器扩展到三台异构机器集群，"
+            "量化多机器调度带来的吞吐量提升和边际递减效应。"
+        ),
+        "D5": (
+            "对比无退火/模拟退火/真机退火三种策略，" "量化退火加速对RL收敛速度和最终质量的增益。"
+        ),
     }
 
     for dim_key in ["D1", "D2", "D3", "D4", "D5"]:
@@ -271,14 +273,16 @@ def _build_cross_dimension_analysis(dimensions: dict) -> str:
             rating = "轻微"
         lines.append(f"| {rank} | {dim_key} | {rng:.1f} | {rating} |")
 
-    lines.extend([
-        "",
-        "### 消融决策树",
-        "",
-        "以下决策树总结了沿每个消融维度的最优路径：",
-        "",
-        "```",
-    ])
+    lines.extend(
+        [
+            "",
+            "### 消融决策树",
+            "",
+            "以下决策树总结了沿每个消融维度的最优路径：",
+            "",
+            "```",
+        ]
+    )
 
     for dim_key, dim_data in dimensions.items():
         configs = dim_data.get("configs", [])
@@ -288,12 +292,14 @@ def _build_cross_dimension_analysis(dimensions: dict) -> str:
         lines.append(f"  {dim_key}: {' > '.join(c['name'] for c in configs)}")
         lines.append(f"    => 最佳: {best['name']}")
 
-    lines.extend([
-        "```",
-        "",
-        "---",
-        "",
-    ])
+    lines.extend(
+        [
+            "```",
+            "",
+            "---",
+            "",
+        ]
+    )
 
     return "\n".join(lines)
 
@@ -317,7 +323,11 @@ def _build_academic_tables(dimensions: dict) -> str:
         lines.append("")
         lines.append("\\begin{table}[htbp]")
         lines.append("  \\centering")
-        lines.append("  \\caption{" + f"{dim_label}消融实验结果 (mean ± std over {configs[0].get('num_seeds', 0)} seeds)" + "}")
+        lines.append(
+            "  \\caption{"
+            + f"{dim_label}消融实验结果 (mean ± std over {configs[0].get('num_seeds', 0)} seeds)"
+            + "}"
+        )
         lines.append("  \\label{tab:" + dim_key.lower() + "}")
         lines.append("  \\begin{tabular}{lrrr}")
         lines.append("    \\toprule")
@@ -361,27 +371,29 @@ def _build_conclusions(dimensions: dict) -> str:
     for dim_key, best in all_best:
         lines.append(f"- **{dim_key}**: 使用 **{best['name']}**")
 
-    lines.extend([
-        "",
-        "### 对参赛材料的建议",
-        "",
-        "1. **核心创新点佐证**: 消融实验数据可作为'双向赋能'创新性的定量证据",
-        "   - D1数据: 退火的边际贡献量化了'量子赋能AI'的价值",
-        "   - D2数据: 状态空间维度分析量化了'AI赋能量子'的信息增益",
-        "2. **技术白皮书引用**: LaTeX 表格可直接嵌入技术白皮书",
-        "3. **答辩Q&A储备**: 效应量排序可作为'哪个组件最重要'问题的定量回答",
-        "",
-        "### 后续研究方向",
-        "",
-        "1. 在真机上进行 D5 (退火策略) 的完整消融，获取真机退火 vs 模拟退火的真实差距",
-        "2. 扩展 D2 到更多维度（如20维），探索信息增益的饱和点",
-        "3. 设计交互消融实验（如 D1×D4），分析算法与机器规模之间的交互效应",
-        "",
-        "---",
-        "",
-        f"*本报告由 `scripts/generate_ablation_report.py` 自动生成于 "
-        f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
-    ])
+    lines.extend(
+        [
+            "",
+            "### 对参赛材料的建议",
+            "",
+            "1. **核心创新点佐证**: 消融实验数据可作为'双向赋能'创新性的定量证据",
+            "   - D1数据: 退火的边际贡献量化了'量子赋能AI'的价值",
+            "   - D2数据: 状态空间维度分析量化了'AI赋能量子'的信息增益",
+            "2. **技术白皮书引用**: LaTeX 表格可直接嵌入技术白皮书",
+            "3. **答辩Q&A储备**: 效应量排序可作为'哪个组件最重要'问题的定量回答",
+            "",
+            "### 后续研究方向",
+            "",
+            "1. 在真机上进行 D5 (退火策略) 的完整消融，获取真机退火 vs 模拟退火的真实差距",
+            "2. 扩展 D2 到更多维度（如20维），探索信息增益的饱和点",
+            "3. 设计交互消融实验（如 D1×D4），分析算法与机器规模之间的交互效应",
+            "",
+            "---",
+            "",
+            f"*本报告由 `scripts/generate_ablation_report.py` 自动生成于 "
+            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+        ]
+    )
 
     return "\n".join(lines)
 
@@ -389,6 +401,7 @@ def _build_conclusions(dimensions: dict) -> str:
 # =========================================================================
 # 图表生成
 # =========================================================================
+
 
 def _generate_charts(dimensions: dict, json_path: str) -> list[str]:
     """生成多维度图表并保存到 results/。"""
@@ -420,10 +433,13 @@ def _generate_charts(dimensions: dict, json_path: str) -> list[str]:
             bars = ax.barh(dim_names, ranges, color=colors, alpha=0.8)
 
             for bar, val, best_name in zip(bars, ranges, best_names):
-                ax.text(bar.get_width() + max(ranges) * 0.02,
-                        bar.get_y() + bar.get_height() / 2,
-                        f"{val:.0f} ({best_name})",
-                        va="center", fontsize=9)
+                ax.text(
+                    bar.get_width() + max(ranges) * 0.02,
+                    bar.get_y() + bar.get_height() / 2,
+                    f"{val:.0f} ({best_name})",
+                    va="center",
+                    fontsize=9,
+                )
 
             ax.set_xlabel("Effect Size (Best - Worst)")
             ax.set_title("Ablation Impact Ranking\n(larger = bigger ablation effect)")
@@ -448,8 +464,13 @@ def _generate_charts(dimensions: dict, json_path: str) -> list[str]:
                 means = [c.get("mean_reward", 0) for c in configs]
                 stds = [c.get("std_reward", 0) for c in configs]
 
-                bars = ax.bar(range(len(names)), means, yerr=stds, capsize=5,
-                              color=plt.cm.Set2(np.linspace(0, 1, len(names))))
+                bars = ax.bar(
+                    range(len(names)),
+                    means,
+                    yerr=stds,
+                    capsize=5,
+                    color=plt.cm.Set2(np.linspace(0, 1, len(names))),
+                )
                 ax.set_xticks(range(len(names)))
                 ax.set_xticklabels(names, rotation=30, ha="right", fontsize=8)
                 ax.set_title(dim_key, fontsize=10)
@@ -471,14 +492,16 @@ def _generate_charts(dimensions: dict, json_path: str) -> list[str]:
 # CLI
 # =========================================================================
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="消融实验分析报告生成器",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("json_path", help="消融实验结果 JSON 文件路径")
-    parser.add_argument("-o", "--output", default=None,
-                        help="输出 Markdown 路径（默认同目录自动命名）")
+    parser.add_argument(
+        "-o", "--output", default=None, help="输出 Markdown 路径（默认同目录自动命名）"
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.json_path):

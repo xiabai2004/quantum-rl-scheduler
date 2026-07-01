@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 # 尝试导入 D-Wave Ocean SDK（真机模式所需）
 try:
     import neal  # D-Wave 的模拟退火求解器
+
     _DWAVE_AVAILABLE = True
     logger.info("已检测到 D-Wave Ocean SDK (dimod + neal)，真机/高级仿真模式可用。")
 except ImportError:
@@ -123,9 +124,9 @@ class QuantumAnnealingOptimizer:
             logger.info("使用内置 numpy 模拟退火求解器")
 
         # 内置模拟退火超参数
-        self._sim_initial_temp = 2.0      # 初始温度
-        self._sim_cooling_rate = 0.995    # 降温系数
-        self._sim_num_sweeps = 200        # 扫描次数（减少以适应 QUBO 规模）
+        self._sim_initial_temp = 2.0  # 初始温度
+        self._sim_cooling_rate = 0.995  # 降温系数
+        self._sim_num_sweeps = 200  # 扫描次数（减少以适应 QUBO 规模）
 
     # ------------------------------------------------------------------
     # 方法 2: network_to_qubo
@@ -190,7 +191,7 @@ class QuantumAnnealingOptimizer:
             # 按比例分配重要性（前 30% 输入层权重受 TD 误差影响更大）
             td_abs = np.mean(np.abs(td_errors))
             importance_scale = min(td_abs, 2.0)
-            param_importance[:int(num_weights * 0.3)] *= (1.0 + importance_scale)
+            param_importance[: int(num_weights * 0.3)] *= 1.0 + importance_scale
         else:
             param_importance = np.ones(num_weights)
 
@@ -249,8 +250,7 @@ class QuantumAnnealingOptimizer:
                     # t = target_delta_direction (目标更新方向)
                     # 线性项来自 g*Δw，我们要最小化 loss，所以目标是 -t*Δw
                     Q[global_idx, global_idx] = (
-                        -target_delta_direction * bit_val * imp
-                        + reg_lambda * bit_val * bit_val
+                        -target_delta_direction * bit_val * imp + reg_lambda * bit_val * bit_val
                     )
 
             # --- 同一权重内比特间的耦合项 ---
@@ -354,21 +354,18 @@ class QuantumAnnealingOptimizer:
                     if isinstance(result, str):
                         best_bitstring = result
                     elif isinstance(result, dict):
-                        best_bitstring = str(result.get("bitstring", "")) or \
-                            self._numpy_simulated_annealing(qubo_matrix)
+                        best_bitstring = str(
+                            result.get("bitstring", "")
+                        ) or self._numpy_simulated_annealing(qubo_matrix)
                     else:
                         logger.warning(
                             f"[退火] 真机退火返回类型 {type(result)} 无法识别，降级为仿真"
                         )
                         best_bitstring = self._numpy_simulated_annealing(qubo_matrix)
-                    logger.info(
-                        f"[退火] 真机退火完成，比特串长度={len(best_bitstring)}"
-                    )
+                    logger.info(f"[退火] 真机退火完成，比特串长度={len(best_bitstring)}")
                     return best_bitstring
                 except Exception as e:
-                    logger.warning(
-                        f"[退火] 真机退火失败 ({type(e).__name__}: {e})，降级为仿真"
-                    )
+                    logger.warning(f"[退火] 真机退火失败 ({type(e).__name__}: {e})，降级为仿真")
                     # 继续走下方仿真路径
             else:
                 logger.info(
@@ -442,7 +439,7 @@ class QuantumAnnealingOptimizer:
             bits = bits[:num_bits_used]
         else:
             padded = np.zeros(num_bits_used, dtype=np.float64)
-            padded[:len(bits)] = bits
+            padded[: len(bits)] = bits
             bits = padded
 
         # 计算当前权重的统计量，用于确定更新幅度
@@ -496,7 +493,7 @@ class QuantumAnnealingOptimizer:
         offset = 0
         for shape in original_shape:
             count = int(np.prod(shape))
-            w = final_values[offset:offset + count].reshape(shape)
+            w = final_values[offset : offset + count].reshape(shape)
             weights.append(w)
             offset += count
 
@@ -570,7 +567,9 @@ class QuantumAnnealingOptimizer:
             total_tensors = len(all_params)
             n_head = min(max_head_tensors, total_tensors)
             head_start_idx = total_tensors - n_head
-            head_param_count = sum(all_params[i].numel() for i in range(head_start_idx, total_tensors))
+            head_param_count = sum(
+                all_params[i].numel() for i in range(head_start_idx, total_tensors)
+            )
             logger.info(
                 f"[退火] head_only 模式: 仅优化最后 {n_head}/{total_tensors} 个参数张量 "
                 f"({head_param_count} 个标量参数)"
@@ -642,10 +641,12 @@ class QuantumAnnealingOptimizer:
             )
 
             # 退火前后权重差异（L2 范数 + 最大绝对差）
-            delta_flat = np.concatenate([
-                (ow - cw).flatten()
-                for ow, cw in zip(optimized_head_weights, current_weights, strict=False)
-            ])
+            delta_flat = np.concatenate(
+                [
+                    (ow - cw).flatten()
+                    for ow, cw in zip(optimized_head_weights, current_weights, strict=False)
+                ]
+            )
             delta_l2 = float(np.linalg.norm(delta_flat))
             delta_max = float(np.max(np.abs(delta_flat))) if delta_flat.size else 0.0
             logger.info(
@@ -716,8 +717,11 @@ class QuantumAnnealingOptimizer:
 
         # 最终权重差异统计（退火前 initial_weights → 退火后 best_weights）
         # 用 L2 范数和最大绝对差证明退火确实改变了 PPO 网络权重
-        final_flat = np.concatenate([w.flatten() for w in best_weights]) \
-            if best_weights is not None else initial_flat
+        final_flat = (
+            np.concatenate([w.flatten() for w in best_weights])
+            if best_weights is not None
+            else initial_flat
+        )
         final_l2_norm = float(np.linalg.norm(final_flat))
         weight_diff = final_flat - initial_flat
         diff_l2 = float(np.linalg.norm(weight_diff))
@@ -860,9 +864,7 @@ class QuantumAnnealingOptimizer:
             for param, w_old, w_new, shape in zip(
                 network.parameters(), old_weights, new_weights, shapes, strict=False
             ):
-                assert w_new.shape == shape, (
-                    f"权重形状不匹配: 期望 {shape}, 实际 {w_new.shape}"
-                )
+                assert w_new.shape == shape, f"权重形状不匹配: 期望 {shape}, 实际 {w_new.shape}"
                 old_std = np.std(w_old) + 1e-8
                 new_std = np.std(w_new) + 1e-8
                 w_new_scaled = w_new * (old_std / new_std)
@@ -1109,7 +1111,9 @@ class QuantumAnnealingOptimizer:
                 delta_energy = delta * linear_term
 
                 # Metropolis 准则：以概率 min(1, exp(-ΔE/T)) 接受新解
-                if delta_energy < 0 or random.random() < math.exp(-delta_energy / max(temperature, 1e-12)):
+                if delta_energy < 0 or random.random() < math.exp(
+                    -delta_energy / max(temperature, 1e-12)
+                ):
                     current_solution[flip_idx] = 1.0 - current_solution[flip_idx]
                     current_energy += delta_energy
 
@@ -1125,10 +1129,7 @@ class QuantumAnnealingOptimizer:
             if temperature < 1e-6:
                 break
 
-        logger.debug(
-            f"numpy 模拟退火: 最佳能量 = {best_energy:.6f}, "
-            f"扫描次数 = {sweep + 1}"
-        )
+        logger.debug(f"numpy 模拟退火: 最佳能量 = {best_energy:.6f}, " f"扫描次数 = {sweep + 1}")
 
         # 转换为比特串
         best_bitstring = "".join(str(int(b)) for b in best_solution)
@@ -1160,7 +1161,9 @@ if __name__ == "__main__":
     print("=" * 60)
 
     # 显示量子加速开关状态
-    print(f"\n环境变量 QUANTUM_ACCELERATION_ENABLED = {os.environ.get('QUANTUM_ACCELERATION_ENABLED', '未设置')}")
+    print(
+        f"\n环境变量 QUANTUM_ACCELERATION_ENABLED = {os.environ.get('QUANTUM_ACCELERATION_ENABLED', '未设置')}"
+    )
     print(f"量子加速功能: {'✅ 已启用' if QUANTUM_ACCELERATION_ENABLED else '❌ 已禁用'}")
     print(f"D-Wave SDK 可用: {'✅ 是' if _DWAVE_AVAILABLE else '❌ 否（使用 numpy 仿真）'}")
 
@@ -1216,6 +1219,7 @@ if __name__ == "__main__":
     # 构建一个简单的 PyTorch 网络作为模拟的 agent
     class MockAgent:
         """模拟的 RL 智能体，用于测试 optimize_policy 接口"""
+
         def __init__(self, state_dim=8, action_dim=3):
             self.policy_net = nn.Sequential(
                 nn.Linear(state_dim, 16),
@@ -1248,6 +1252,7 @@ if __name__ == "__main__":
     # 脚本直接运行时，直接修改全局变量
     # 将当前模块标记为启用量子加速
     import __main__
+
     __main__.QUANTUM_ACCELERATION_ENABLED = True
     # 同时修改当前模块命名空间
     globals()["QUANTUM_ACCELERATION_ENABLED"] = True
@@ -1264,7 +1269,8 @@ if __name__ == "__main__":
         torch.equal(p1, p2)
         for p1, p2 in zip(
             optimized_agent.policy_net.parameters(),
-            optimized_agent.target_net.parameters(), strict=False,
+            optimized_agent.target_net.parameters(),
+            strict=False,
         )
     )
     print(f"  target_net 同步状态: {'✅ 已同步' if params_match else '❌ 未同步'}")

@@ -1,4 +1,5 @@
 """查询天衍云真机任务结果"""
+
 import time
 
 import cqlib

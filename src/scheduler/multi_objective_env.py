@@ -39,13 +39,13 @@ from src.scheduler.env import (
 
 # 预定义权重组合（对应不同调度偏好）
 DEFAULT_WEIGHTS = {
-    "throughput_heavy": [1.0, 0.5, 0.5],   # 偏吞吐量
-    "balance_heavy":    [0.5, 1.0, 0.5],   # 偏资源平衡
-    "quality_heavy":    [0.5, 0.5, 1.0],   # 偏服务质量
-    "balanced":         [1.0, 1.0, 1.0],   # 均衡
-    "throughput_only":  [1.0, 0.0, 0.0],   # 仅吞吐量
-    "balance_only":     [0.0, 1.0, 0.0],   # 仅平衡
-    "quality_only":     [0.0, 0.0, 1.0],   # 仅服务质量
+    "throughput_heavy": [1.0, 0.5, 0.5],  # 偏吞吐量
+    "balance_heavy": [0.5, 1.0, 0.5],  # 偏资源平衡
+    "quality_heavy": [0.5, 0.5, 1.0],  # 偏服务质量
+    "balanced": [1.0, 1.0, 1.0],  # 均衡
+    "throughput_only": [1.0, 0.0, 0.0],  # 仅吞吐量
+    "balance_only": [0.0, 1.0, 0.0],  # 仅平衡
+    "quality_only": [0.0, 0.0, 1.0],  # 仅服务质量
 }
 
 
@@ -199,9 +199,7 @@ class MultiObjectiveRewardWrapper(gym.Wrapper):
 
         # 加权标量化
         reward = (
-            self._weights[0] * throughput
-            + self._weights[1] * balance
-            + self._weights[2] * quality
+            self._weights[0] * throughput + self._weights[1] * balance + self._weights[2] * quality
         )
 
         # 存入 info dict
@@ -265,7 +263,7 @@ class MultiObjectiveRewardWrapper(gym.Wrapper):
         """
         env = self.env.unwrapped
         quantum_util = env._quantum.available_ratio  # 量子可用比率（越高越空闲）
-        classical_util = env._classical.load           # 经典负载（越高越忙）
+        classical_util = env._classical.load  # 经典负载（越高越忙）
 
         # 平衡度 = -|量子空闲率 - 经典负载率|
         # 当两者相等时最平衡，值为 0
@@ -334,15 +332,14 @@ class MultiObjectiveRewardWrapper(gym.Wrapper):
             preset: 预设名称，如 "throughput_heavy", "balance_heavy", "quality_heavy"
         """
         if preset not in DEFAULT_WEIGHTS:
-            raise ValueError(
-                f"未知权重预设 '{preset}'，可选: {list(DEFAULT_WEIGHTS.keys())}"
-            )
+            raise ValueError(f"未知权重预设 '{preset}'，可选: {list(DEFAULT_WEIGHTS.keys())}")
         self._weights = list(DEFAULT_WEIGHTS[preset])
 
 
 # ---------------------------------------------------------------------------
 # 工厂函数
 # ---------------------------------------------------------------------------
+
 
 def make_mo_env(
     max_qubits: int = 20,

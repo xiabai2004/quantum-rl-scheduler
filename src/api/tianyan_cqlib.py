@@ -31,13 +31,13 @@ class CqlibTianyanClient:
 
     # 已知可用的超导真机
     REAL_MACHINES = [  # noqa: RUF012
-        "tianyan_sw",    # 超导 free
-        "tianyan_s",     # 超导 free
-        "tianyan_tn",    # 超导 free
-        "tianyan_tnn",   # 超导 free
-        "tianyan_swn",   # 超导 free
-        "tianyan_sa",    # 超导 free
-        "tianyan176",    # 176比特 free
+        "tianyan_sw",  # 超导 free
+        "tianyan_s",  # 超导 free
+        "tianyan_tn",  # 超导 free
+        "tianyan_tnn",  # 超导 free
+        "tianyan_swn",  # 超导 free
+        "tianyan_sa",  # 超导 free
+        "tianyan176",  # 176比特 free
         "tianyan176-2",  # 176比特 free
     ]
 
@@ -145,9 +145,7 @@ class CqlibTianyanClient:
 
         # 预检当前机器状态（校准中/维护中立即跳过，不重试）
         if not self._is_machine_available(self.machine_name):
-            logger.warning(
-                f"[Cqlib] {self.machine_name} 不可用（校准/维护中），切换备用机"
-            )
+            logger.warning(f"[Cqlib] {self.machine_name} 不可用（校准/维护中），切换备用机")
             if self.auto_retry_machine:
                 return self._retry_other_machine(qcis_str, shots, task_name)
             return None
@@ -208,15 +206,20 @@ class CqlibTianyanClient:
             bool: 命中关键词返回 True
         """
         keywords = (
-            "校准", "calibration", "维护", "maintenance",
-            "不可用", "unavailable", "忙碌", "busy", "offline",
+            "校准",
+            "calibration",
+            "维护",
+            "maintenance",
+            "不可用",
+            "unavailable",
+            "忙碌",
+            "busy",
+            "offline",
         )
         lower_msg = err_msg.lower()
         return any(kw.lower() in lower_msg for kw in keywords)
 
-    def _retry_other_machine(
-        self, qcis: str, shots: int, task_name: str
-    ) -> str | None:
+    def _retry_other_machine(self, qcis: str, shots: int, task_name: str) -> str | None:
         """当前机器不可用时，按 REAL_MACHINES 列表尝试其他机器。
 
         每台候选机器先做可用性预检（跳过校准/维护中的），再尝试提交。
@@ -281,7 +284,9 @@ class CqlibTianyanClient:
         """获取任务执行结果"""
         return self.get_task_status(task_id)
 
-    def wait_for_task(self, task_id: str, timeout: int = 300, poll_interval: int = 5) -> dict[str, Any]:
+    def wait_for_task(
+        self, task_id: str, timeout: int = 300, poll_interval: int = 5
+    ) -> dict[str, Any]:
         """轮询等待任务完成并返回结果
 
         Args:
@@ -347,9 +352,7 @@ class MultiMachineCqlibCoordinator:
         self._submit_count: dict[str, int] = dict.fromkeys(self.machine_names, 0)
         self._fail_count: dict[str, int] = dict.fromkeys(self.machine_names, 0)
 
-        logger.info(
-            f"[MultiMachine] 纳管 {len(self.machine_names)} 台机器: {self.machine_names}"
-        )
+        logger.info(f"[MultiMachine] 纳管 {len(self.machine_names)} 台机器: {self.machine_names}")
 
     def _get_client(self, machine_name: str) -> CqlibTianyanClient:
         """懒加载指定机器的客户端（避免初始化时连接所有机器）。"""
@@ -383,9 +386,7 @@ class MultiMachineCqlibCoordinator:
         """
         try:
             client = self._get_client(machine_name)
-            task_id = client.submit_quantum_task(
-                qcis=qcis, shots=shots, task_name=task_name
-            )
+            task_id = client.submit_quantum_task(qcis=qcis, shots=shots, task_name=task_name)
             self._submit_count[machine_name] = self._submit_count.get(machine_name, 0) + 1
             return task_id
         except Exception as e:

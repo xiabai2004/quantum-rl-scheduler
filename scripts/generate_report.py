@@ -1,6 +1,7 @@
 """
 读取 simulation_results_*.json，输出 Markdown 格式对比报告
 """
+
 import argparse
 import json
 import os
@@ -164,7 +165,8 @@ def main():
         help="仿真结果 JSON 文件路径",
     )
     parser.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         type=str,
         default=None,
         help="输出 Markdown 文件路径（默认同目录下 strategy_comparison_report.md）",

@@ -95,7 +95,9 @@ def save_config(config: dict[str, Any], config_path: str = "config/config.yaml")
 
 
 # 数据预处理
-def normalize_vector(vector: list[float], min_val: float = 0.0, max_val: float = 1.0) -> list[float]:
+def normalize_vector(
+    vector: list[float], min_val: float = 0.0, max_val: float = 1.0
+) -> list[float]:
     """
     归一化向量
 
@@ -254,11 +256,7 @@ class MetricsCalculator:
         normalized_wait = 1.0 - min(avg_wait_time / max_wait_time, 1.0)
 
         # 加权综合
-        reward = (
-            0.4 * completion_rate +
-            0.3 * normalized_wait +
-            0.3 * resource_utilization
-        )
+        reward = 0.4 * completion_rate + 0.3 * normalized_wait + 0.3 * resource_utilization
 
         return reward
 

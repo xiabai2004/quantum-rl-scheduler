@@ -17,7 +17,7 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.api import get_client, get_cqlib_client
 from src.api.circuit_breaker import CircuitState
@@ -231,7 +231,11 @@ class TestMockTianyanClient(unittest.TestCase):
         """任务始终未完成时 wait_for_task 应抛出 TimeoutError。"""
         task_id = self.client.submit_quantum_task(circuit_qasm=BELL_QASM, shots=64)
         # 让 get_task_status 始终返回非终态
-        with patch.object(self.client, "get_task_status", return_value={"status": "PENDING"}), patch("time.sleep"), self.assertRaises(TimeoutError):
+        with (
+            patch.object(self.client, "get_task_status", return_value={"status": "PENDING"}),
+            patch("time.sleep"),
+            self.assertRaises(TimeoutError),
+        ):
             self.client.wait_for_task(task_id, poll_interval=0.05, timeout=0.1)
 
     def test_generate_mock_result_counts_sum_to_shots(self):
@@ -293,7 +297,9 @@ class TestCreateTianyanClientFactory(unittest.TestCase):
 
     def test_env_mock_mode_true(self):
         """环境变量 TIANYAN_MOCK_MODE=true 时应使用 Mock 模式。"""
-        with patch.dict(os.environ, {"TIANYAN_MOCK_MODE": "true", "TIANYAN_MOCK_DELAY": "0.0"}, clear=False):
+        with patch.dict(
+            os.environ, {"TIANYAN_MOCK_MODE": "true", "TIANYAN_MOCK_DELAY": "0.0"}, clear=False
+        ):
             client = create_tianyan_client(mock_mode=None)
         self.assertIsInstance(client, MockTianyanClient)
         self.assertEqual(client.mock_delay, 0.0)
@@ -315,7 +321,11 @@ class TestCreateTianyanClientFactory(unittest.TestCase):
         """失败率应从 TIANYAN_MOCK_FAILURE_RATE 环境变量读取。"""
         with patch.dict(
             os.environ,
-            {"TIANYAN_MOCK_MODE": "true", "TIANYAN_MOCK_DELAY": "0.0", "TIANYAN_MOCK_FAILURE_RATE": "0.3"},
+            {
+                "TIANYAN_MOCK_MODE": "true",
+                "TIANYAN_MOCK_DELAY": "0.0",
+                "TIANYAN_MOCK_FAILURE_RATE": "0.3",
+            },
             clear=False,
         ):
             client = create_tianyan_client(mock_mode=None)
@@ -432,7 +442,9 @@ class TestTianyanClientMockDelegation(unittest.TestCase):
     def test_submit_quantum_task_delegates(self):
         """submit_quantum_task 应委托给 mock 客户端。"""
         self.client._mock_client.submit_quantum_task.return_value = "mock-abc"
-        tid = self.client.submit_quantum_task(circuit_qasm=BELL_QASM, shots=256, backend="tianyan-287")
+        tid = self.client.submit_quantum_task(
+            circuit_qasm=BELL_QASM, shots=256, backend="tianyan-287"
+        )
         self.assertEqual(tid, "mock-abc")
         self.client._mock_client.submit_quantum_task.assert_called_once_with(
             circuit_qasm=BELL_QASM, shots=256, backend="tianyan-287"
@@ -486,7 +498,10 @@ class TestTianyanClientMockDelegation(unittest.TestCase):
 
     def test_wait_for_task_mock_failed_raises(self):
         """Mock 模式下任务 FAILED 应抛出 TianyanAPIError(400)。"""
-        self.client._mock_client.get_task_status.return_value = {"status": "FAILED", "error": "boom"}
+        self.client._mock_client.get_task_status.return_value = {
+            "status": "FAILED",
+            "error": "boom",
+        }
         with patch("time.sleep"), self.assertRaises(TianyanAPIError) as ctx:
             self.client.wait_for_task("tid", poll_interval=0.1, timeout=2.0)
         self.assertEqual(ctx.exception.status_code, 400)
@@ -613,7 +628,9 @@ class TestTianyanClientRealRestPath(unittest.TestCase):
 
     def test_get_backend_info_rest(self):
         """真实模式无 cqlib 时 get_backend_info 走 REST 路径。"""
-        with patch.object(self.client, "_request", return_value={"name": "tianyan-287"}) as mock_req:
+        with patch.object(
+            self.client, "_request", return_value={"name": "tianyan-287"}
+        ) as mock_req:
             info = self.client.get_backend_info("tianyan-287")
         self.assertEqual(info["name"], "tianyan-287")
         mock_req.assert_called_once_with("GET", "/backends/tianyan-287")
@@ -692,7 +709,9 @@ class TestTianyanClientCqlibDelegation(unittest.TestCase):
         self.client._cqlib.wait_for_task.return_value = {"status": "completed"}
         result = self.client.wait_for_task("tid", poll_interval=3.0, timeout=120.0)
         self.assertEqual(result["status"], "completed")
-        self.client._cqlib.wait_for_task.assert_called_once_with("tid", timeout=120, poll_interval=3)
+        self.client._cqlib.wait_for_task.assert_called_once_with(
+            "tid", timeout=120, poll_interval=3
+        )
 
 
 class TestTianyanAPIError(unittest.TestCase):
@@ -751,7 +770,9 @@ class TestCqlibClient(unittest.TestCase):
 
     def test_platform_lazy_load(self):
         """platform 属性应懒加载 TianYanPlatform。"""
-        client = CqlibTianyanClient(login_key="k", machine_name="tianyan_sw", auto_retry_machine=False)
+        client = CqlibTianyanClient(
+            login_key="k", machine_name="tianyan_sw", auto_retry_machine=False
+        )
         client.cqlib = MagicMock()
         client.cqlib.TianYanPlatform.return_value = "PLATFORM_OBJ"
         self.assertEqual(client.platform, "PLATFORM_OBJ")
@@ -777,9 +798,10 @@ class TestCqlibClient(unittest.TestCase):
         """list_backends 应将元组列表转为字典列表。"""
         backends = self.client.list_backends()
         self.assertEqual(len(backends), 2)
-        self.assertEqual(backends[0], {
-            "id": "id1", "type": "superconducting", "status": "running", "name": "tianyan_s"
-        })
+        self.assertEqual(
+            backends[0],
+            {"id": "id1", "type": "superconducting", "status": "running", "name": "tianyan_s"},
+        )
 
     def test_list_backends_exception_returns_empty(self):
         """查询异常时应返回空列表。"""
@@ -836,14 +858,19 @@ class TestCqlibClient(unittest.TestCase):
 
     def test_submit_quantum_task_machine_unavailable_with_retry(self):
         """当前机器不可用且 auto_retry=True 应调用 _retry_other_machine。"""
-        with patch.object(self.client, "_is_machine_available", return_value=False), patch.object(self.client, "_retry_other_machine", return_value="alt-tid") as mock_retry:
+        with (
+            patch.object(self.client, "_is_machine_available", return_value=False),
+            patch.object(self.client, "_retry_other_machine", return_value="alt-tid") as mock_retry,
+        ):
             tid = self.client.submit_quantum_task(qcis="H Q0\nM Q0", shots=64)
         self.assertEqual(tid, "alt-tid")
         mock_retry.assert_called_once()
 
     def test_submit_quantum_task_machine_unavailable_no_retry(self):
         """当前机器不可用且 auto_retry=False 应返回 None。"""
-        client = CqlibTianyanClient(login_key="k", machine_name="tianyan_s", auto_retry_machine=False)
+        client = CqlibTianyanClient(
+            login_key="k", machine_name="tianyan_s", auto_retry_machine=False
+        )
         client._platform = MagicMock()
         with patch.object(client, "_is_machine_available", return_value=False):
             tid = client.submit_quantum_task(qcis="H Q0\nM Q0", shots=64)
@@ -852,14 +879,19 @@ class TestCqlibClient(unittest.TestCase):
     def test_submit_quantum_task_exception_triggers_retry(self):
         """提交抛异常且 auto_retry=True 应触发 _retry_other_machine。"""
         self.client._platform.submit_experiment.side_effect = Exception("校准中")
-        with patch.object(self.client, "_is_machine_available", return_value=True), patch.object(self.client, "_retry_other_machine", return_value="alt-tid") as mock_retry:
+        with (
+            patch.object(self.client, "_is_machine_available", return_value=True),
+            patch.object(self.client, "_retry_other_machine", return_value="alt-tid") as mock_retry,
+        ):
             tid = self.client.submit_quantum_task(qcis="H Q0\nM Q0", shots=64)
         self.assertEqual(tid, "alt-tid")
         mock_retry.assert_called_once()
 
     def test_submit_quantum_task_exception_no_retry_returns_none(self):
         """提交抛异常且 auto_retry=False 应返回 None。"""
-        client = CqlibTianyanClient(login_key="k", machine_name="tianyan_s", auto_retry_machine=False)
+        client = CqlibTianyanClient(
+            login_key="k", machine_name="tianyan_s", auto_retry_machine=False
+        )
         client._platform = MagicMock()
         client._platform.submit_experiment.side_effect = Exception("校准中")
         with patch.object(client, "_is_machine_available", return_value=True):
@@ -909,7 +941,13 @@ class TestCqlibClient(unittest.TestCase):
 
     def test_is_unavailable_error_keywords(self):
         """_is_unavailable_error 应识别校准/维护/不可用等关键词。"""
-        for msg in ("机器校准中", "calibration in progress", "维护中", "machine busy", "offline now"):
+        for msg in (
+            "机器校准中",
+            "calibration in progress",
+            "维护中",
+            "machine busy",
+            "offline now",
+        ):
             self.assertTrue(CqlibTianyanClient._is_unavailable_error(msg), f"failed for {msg}")
         self.assertFalse(CqlibTianyanClient._is_unavailable_error("some random error"))
 
@@ -943,7 +981,9 @@ class TestCqlibClient(unittest.TestCase):
 
     def test_get_task_result_delegates_to_status(self):
         """get_task_result 应委托给 get_task_status。"""
-        with patch.object(self.client, "get_task_status", return_value={"status": "completed"}) as mock_s:
+        with patch.object(
+            self.client, "get_task_status", return_value={"status": "completed"}
+        ) as mock_s:
             result = self.client.get_task_result("tid")
         self.assertEqual(result["status"], "completed")
         mock_s.assert_called_once_with("tid")
@@ -962,17 +1002,24 @@ class TestCqlibClient(unittest.TestCase):
 
     def test_wait_for_task_timeout(self):
         """超时应返回 timeout 状态。"""
-        with patch.object(self.client, "get_task_status", return_value={"status": "running"}), patch("time.sleep"):
+        with (
+            patch.object(self.client, "get_task_status", return_value={"status": "running"}),
+            patch("time.sleep"),
+        ):
             result = self.client.wait_for_task("tid", timeout=0.1, poll_interval=0.05)
         self.assertEqual(result["status"], "timeout")
 
     def test_get_queue_status(self):
         """get_queue_status 应基于 list_backends 统计 running 机器数。"""
-        with patch.object(self.client, "list_backends", return_value=[
-            {"name": "tianyan_s", "status": "running"},
-            {"name": "tianyan_sw", "status": "running"},
-            {"name": "tianyan_tn", "status": "calibration"},
-        ]):
+        with patch.object(
+            self.client,
+            "list_backends",
+            return_value=[
+                {"name": "tianyan_s", "status": "running"},
+                {"name": "tianyan_sw", "status": "running"},
+                {"name": "tianyan_tn", "status": "calibration"},
+            ],
+        ):
             q = self.client.get_queue_status()
         self.assertEqual(q["total_machines"], 3)
         self.assertEqual(q["running"], 2)

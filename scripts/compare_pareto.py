@@ -26,6 +26,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+
 # ============================================================================
 # 命令行参数解析
 # ============================================================================
@@ -98,10 +99,7 @@ def find_pareto_front(points: np.ndarray) -> np.ndarray:
             if i == j:
                 continue
             # 如果 j 在所有维度上都不差于 i，且至少一个维度严格优于 i
-            if (
-                np.all(points[j] >= points[i])
-                and np.any(points[j] > points[i])
-            ):
+            if np.all(points[j] >= points[i]) and np.any(points[j] > points[i]):
                 is_pareto[i] = False
                 break
     return is_pareto
@@ -124,6 +122,7 @@ def plot_3d_scatter(
         dpi: 图片 DPI
     """
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
@@ -165,17 +164,31 @@ def plot_3d_scatter(
             continue
         pts = points[idxs]
         ax.scatter(
-            pts[:, 0], pts[:, 1], pts[:, 2],
-            c=color, label=preset, s=80, alpha=0.85, edgecolors="black", linewidth=0.5,
+            pts[:, 0],
+            pts[:, 1],
+            pts[:, 2],
+            c=color,
+            label=preset,
+            s=80,
+            alpha=0.85,
+            edgecolors="black",
+            linewidth=0.5,
         )
 
     # 标记帕累托前沿
     pareto_pts = points[pareto_mask]
     if len(pareto_pts) > 0:
         ax.scatter(
-            pareto_pts[:, 0], pareto_pts[:, 1], pareto_pts[:, 2],
-            c="gold", marker="*", s=200, alpha=1.0,
-            edgecolors="black", linewidth=1.0, label="Pareto Front",
+            pareto_pts[:, 0],
+            pareto_pts[:, 1],
+            pareto_pts[:, 2],
+            c="gold",
+            marker="*",
+            s=200,
+            alpha=1.0,
+            edgecolors="black",
+            linewidth=1.0,
+            label="Pareto Front",
         )
 
     ax.set_xlabel("Throughput", fontsize=12)
@@ -205,6 +218,7 @@ def plot_2d_projections(
         dpi: 图片 DPI
     """
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
@@ -223,11 +237,13 @@ def plot_2d_projections(
         preset = r.get("weight_preset", "unknown")
         if preset not in points:
             points[preset] = []
-        points[preset].append([
-            mo.get("avg_throughput", 0),
-            mo.get("avg_balance", 0),
-            mo.get("avg_quality", 0),
-        ])
+        points[preset].append(
+            [
+                mo.get("avg_throughput", 0),
+                mo.get("avg_balance", 0),
+                mo.get("avg_quality", 0),
+            ]
+        )
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
 
@@ -243,8 +259,14 @@ def plot_2d_projections(
             pts_arr = np.array(pts)
             color = colors_map.get(preset, "#888888")
             ax.scatter(
-                pts_arr[:, dim_x], pts_arr[:, dim_y],
-                c=color, label=preset, s=60, alpha=0.8, edgecolors="black", linewidth=0.3,
+                pts_arr[:, dim_x],
+                pts_arr[:, dim_y],
+                c=color,
+                label=preset,
+                s=60,
+                alpha=0.8,
+                edgecolors="black",
+                linewidth=0.3,
             )
 
         ax.set_xlabel(xlabel, fontsize=11)
@@ -275,6 +297,7 @@ def plot_radar(
         dpi: 图片 DPI
     """
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 

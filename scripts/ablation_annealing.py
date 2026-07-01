@@ -186,15 +186,31 @@ def run_multi_seed():
     finals_no = [r["rewards"][-1] for r in all_no_anneal]
     finals_anneal = [r["rewards"][-1] for r in all_with_anneal]
 
-    bars1 = ax.bar(x - width/2, finals_no, width, label="PPO (无退火)", color="#3498db", alpha=0.8)
-    bars2 = ax.bar(x + width/2, finals_anneal, width, label="PPO + 退火", color="#e74c3c", alpha=0.8)
+    bars1 = ax.bar(
+        x - width / 2, finals_no, width, label="PPO (无退火)", color="#3498db", alpha=0.8
+    )
+    bars2 = ax.bar(
+        x + width / 2, finals_anneal, width, label="PPO + 退火", color="#e74c3c", alpha=0.8
+    )
 
     for bar, val in zip(bars1, finals_no):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 20,
-                f"{val:.0f}", ha="center", fontsize=8, color="#3498db")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 20,
+            f"{val:.0f}",
+            ha="center",
+            fontsize=8,
+            color="#3498db",
+        )
     for bar, val in zip(bars2, finals_anneal):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 20,
-                f"{val:.0f}", ha="center", fontsize=8, color="#e74c3c")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 20,
+            f"{val:.0f}",
+            ha="center",
+            fontsize=8,
+            color="#e74c3c",
+        )
 
     ax.set_xlabel("Seed")
     ax.set_ylabel("Final Reward (50K steps)")
@@ -229,8 +245,15 @@ def run_multi_seed():
     for i, line in enumerate(summary_lines):
         y = 0.95 - i * 0.04
         fontweight = "bold" if i == 0 else "normal"
-        ax.text(0.05, y, line, transform=ax.transAxes, fontsize=10,
-                fontweight=fontweight, family="monospace")
+        ax.text(
+            0.05,
+            y,
+            line,
+            transform=ax.transAxes,
+            fontsize=10,
+            fontweight=fontweight,
+            family="monospace",
+        )
 
     plt.tight_layout()
     png_path = os.path.join(RESULTS_DIR, f"ablation_annealing_multiseed_{timestamp}.png")

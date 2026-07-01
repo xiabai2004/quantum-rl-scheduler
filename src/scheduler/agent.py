@@ -57,6 +57,7 @@ from src.quantum.annealing import QuantumAnnealingOptimizer
 # 自定义策略网络：Dueling DQN（兼容 SB3 2.0+）
 # ---------------------------------------------------------------------------
 
+
 class DuelingQNetwork(QNetwork):
     """
     Dueling DQN 策略网络（兼容 Stable-Baselines3 2.0+）
@@ -103,9 +104,9 @@ class DuelingQNetwork(QNetwork):
         shared_output_dim = self.net_arch[-1] if self.net_arch else features_dim
 
         # 共享特征层（提取高层表示）
-        self.q_net = nn.Sequential(*create_mlp(
-            features_dim, shared_output_dim, self.net_arch[:-1], self.activation_fn
-        ))
+        self.q_net = nn.Sequential(
+            *create_mlp(features_dim, shared_output_dim, self.net_arch[:-1], self.activation_fn)
+        )
 
         # 价值分支 V(s)：估计状态价值
         self.value_stream = nn.Sequential(
@@ -136,7 +137,7 @@ class DuelingQNetwork(QNetwork):
         # 通过共享层
         shared = self.q_net(features)
         # 计算状态价值和动作优势
-        value = self.value_stream(shared)          # (batch, 1)
+        value = self.value_stream(shared)  # (batch, 1)
         advantage = self.advantage_stream(shared)  # (batch, action_dim)
         # Q(s,a) = V(s) + A(s,a) - mean(A(s,a))
         q_values = value + advantage - advantage.mean(dim=-1, keepdim=True)
@@ -146,6 +147,7 @@ class DuelingQNetwork(QNetwork):
 # ---------------------------------------------------------------------------
 # 自定义回调：记录探索率衰减
 # ---------------------------------------------------------------------------
+
 
 class EpsilonExplorationCallback(BaseCallback):
     """
@@ -185,6 +187,7 @@ class EpsilonExplorationCallback(BaseCallback):
 # 核心类：SchedulerAgent
 # ---------------------------------------------------------------------------
 
+
 class SchedulerAgent:
     """
     基于 DQN 的量子-经典混合调度智能体
@@ -216,19 +219,19 @@ class SchedulerAgent:
     """
 
     # ========================= 默认训练超参数 =========================
-    DEFAULT_LEARNING_RATE: float = 0.001          # 学习率
-    DEFAULT_BUFFER_SIZE: int = 10000              # 经验回放缓冲区大小
-    DEFAULT_BATCH_SIZE: int = 64                  # 训练批量大小
-    DEFAULT_GAMMA: float = 0.99                  # 折扣因子（长期回报权重）
-    DEFAULT_TARGET_UPDATE_INTERVAL: int = 500    # 目标网络更新间隔（步数）
+    DEFAULT_LEARNING_RATE: float = 0.001  # 学习率
+    DEFAULT_BUFFER_SIZE: int = 10000  # 经验回放缓冲区大小
+    DEFAULT_BATCH_SIZE: int = 64  # 训练批量大小
+    DEFAULT_GAMMA: float = 0.99  # 折扣因子（长期回报权重）
+    DEFAULT_TARGET_UPDATE_INTERVAL: int = 500  # 目标网络更新间隔（步数）
     DEFAULT_TRAIN_FREQ: tuple[int, str] = (1, "step")  # 训练频率：每步一次
-    DEFAULT_EPSILON_START: float = 1.0            # 初始探索率（完全探索）
-    DEFAULT_EPSILON_END: float = 0.05             # 最终探索率（保持少量探索）
-    DEFAULT_EPSILON_DECAY: float = 0.995          # 探索率衰减系数
-    DEFAULT_LEARNING_STARTS: int = 100            # 开始训练前的随机探索步数
-    DEFAULT_TAU: float = 1.0                      # 目标网络软更新系数（1.0 = 硬更新）
-    DEFAULT_LOG_DIR: str = "./logs/"              # TensorBoard 日志目录
-    DEFAULT_VERBOSE: int = 1                     # 训练日志详细程度
+    DEFAULT_EPSILON_START: float = 1.0  # 初始探索率（完全探索）
+    DEFAULT_EPSILON_END: float = 0.05  # 最终探索率（保持少量探索）
+    DEFAULT_EPSILON_DECAY: float = 0.995  # 探索率衰减系数
+    DEFAULT_LEARNING_STARTS: int = 100  # 开始训练前的随机探索步数
+    DEFAULT_TAU: float = 1.0  # 目标网络软更新系数（1.0 = 硬更新）
+    DEFAULT_LOG_DIR: str = "./logs/"  # TensorBoard 日志目录
+    DEFAULT_VERBOSE: int = 1  # 训练日志详细程度
 
     # 策略网络隐藏层架构
     NET_ARCH: list = [128, 64]  # noqa: RUF012
@@ -316,7 +319,7 @@ class SchedulerAgent:
         }
 
         model = DQN(
-            policy="MlpPolicy",          # 使用 MLP 策略（将通过 policy_kwargs 替换为 Dueling）
+            policy="MlpPolicy",  # 使用 MLP 策略（将通过 policy_kwargs 替换为 Dueling）
             env=self.env,
             learning_rate=self.learning_rate,
             buffer_size=self.buffer_size,
@@ -333,7 +336,7 @@ class SchedulerAgent:
             # 探索参数
             exploration_initial_eps=self.epsilon_start,
             exploration_final_eps=self.epsilon_end,
-            exploration_fraction=0.5,    # 探索占总训练步数的比例
+            exploration_fraction=0.5,  # 探索占总训练步数的比例
         )
 
         # 替换为 Dueling DQN 网络
@@ -425,9 +428,7 @@ class SchedulerAgent:
         # 构建评估回调
         eval_callback = EvalCallback(
             eval_env=eval_env,
-            best_model_save_path=os.path.join(
-                self.log_dir, "best_model"
-            ),
+            best_model_save_path=os.path.join(self.log_dir, "best_model"),
             log_path=os.path.join(self.log_dir, "eval_results"),
             eval_freq=eval_freq,
             n_eval_episodes=n_eval_episodes,
@@ -470,9 +471,7 @@ class SchedulerAgent:
             动作索引（0=经典资源，1=量子资源，2=混合执行）
         """
         if self.model is None:
-            raise RuntimeError(
-                "模型尚未训练！请先调用 train() 方法或使用 load() 加载已训练模型。"
-            )
+            raise RuntimeError("模型尚未训练！请先调用 train() 方法或使用 load() 加载已训练模型。")
 
         # 确保状态是二维张量 (1, obs_dim)
         if state.ndim == 1:
@@ -508,9 +507,7 @@ class SchedulerAgent:
                 - num_episodes: 评估回合数
         """
         if self.model is None:
-            raise RuntimeError(
-                "模型尚未训练！请先调用 train() 方法或使用 load() 加载已训练模型。"
-            )
+            raise RuntimeError("模型尚未训练！请先调用 train() 方法或使用 load() 加载已训练模型。")
 
         episode_rewards = []
         episode_success_rates = []
@@ -582,7 +579,9 @@ class SchedulerAgent:
 
         if "policy" in params:
             policy_state = params["policy"]
-            dueling_keys = [k for k in policy_state if "value_stream" in k or "advantage_stream" in k]
+            dueling_keys = [
+                k for k in policy_state if "value_stream" in k or "advantage_stream" in k
+            ]
             if dueling_keys:
                 self._replace_with_dueling(self.model)
                 q_net_state = {}
@@ -647,6 +646,7 @@ class SchedulerAgent:
 # 量子退火回调
 # ---------------------------------------------------------------------------
 
+
 class AnnealingCallback(BaseCallback):
     """
     每 N 步用量子退火优化 PPO 网络权重的回调。
@@ -691,8 +691,10 @@ class AnnealingCallback(BaseCallback):
                     self.optimized_count += 1
 
                     if self.verbose:
-                        print(f"[退火] 步数{self.n_calls}: 优化完成 (质量={quality:.4f}, "
-                              f"累计优化{self.optimized_count}次)")
+                        print(
+                            f"[退火] 步数{self.n_calls}: 优化完成 (质量={quality:.4f}, "
+                            f"累计优化{self.optimized_count}次)"
+                        )
             except Exception as e:
                 if self.verbose:
                     print(f"[退火] 步数{self.n_calls}: 退火跳过 ({e})")
@@ -702,6 +704,7 @@ class AnnealingCallback(BaseCallback):
 # ---------------------------------------------------------------------------
 # 真机抽样回调：训练过程中按概率向天衍云真机提交任务
 # ---------------------------------------------------------------------------
+
 
 class RealMachineCallback(BaseCallback):
     """每 N 步抽样 1 个任务提交真机，记录真实耗时。
@@ -853,6 +856,7 @@ class RealMachineCallback(BaseCallback):
 # ---------------------------------------------------------------------------
 # PPO 智能体
 # ---------------------------------------------------------------------------
+
 
 class PPOAgent:
     """
@@ -1092,9 +1096,7 @@ class PPOAgent:
             动作索引
         """
         if self.model is None:
-            raise RuntimeError(
-                "模型尚未训练！请先调用 train() 方法或使用 load() 加载已训练模型。"
-            )
+            raise RuntimeError("模型尚未训练！请先调用 train() 方法或使用 load() 加载已训练模型。")
 
         if state.ndim == 1:
             state = state.reshape(1, -1)
@@ -1118,9 +1120,7 @@ class PPOAgent:
             评估结果字典
         """
         if self.model is None:
-            raise RuntimeError(
-                "模型尚未训练！请先调用 train() 方法或使用 load() 加载已训练模型。"
-            )
+            raise RuntimeError("模型尚未训练！请先调用 train() 方法或使用 load() 加载已训练模型。")
 
         episode_rewards = []
         episode_success_rates = []

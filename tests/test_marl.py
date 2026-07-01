@@ -56,7 +56,12 @@ class TestSingleMachineConsistency(unittest.TestCase):
         """单机 MAPPO 应能跑通完整 episode，predict 返回合法动作。"""
         env = _make_env(machine_configs=None, max_steps=60, seed=7)
         agent = MultiAgentPPO(
-            env, n_steps=64, batch_size=32, n_epochs=2, seed=7, verbose=0,
+            env,
+            n_steps=64,
+            batch_size=32,
+            n_epochs=2,
+            seed=7,
+            verbose=0,
         )
 
         # 局部观测维度 = 全局 OBS_DIM + 本机 3
@@ -73,8 +78,13 @@ class TestSingleMachineConsistency(unittest.TestCase):
         """单机短训练后应能正常完成且 evaluate 返回有限奖励。"""
         env = _make_env(machine_configs=None, max_steps=80, seed=11)
         agent = MultiAgentPPO(
-            env, n_steps=64, batch_size=32, n_epochs=3,
-            learning_rate=3e-4, seed=11, verbose=0,
+            env,
+            n_steps=64,
+            batch_size=32,
+            n_epochs=3,
+            learning_rate=3e-4,
+            seed=11,
+            verbose=0,
         )
         agent.train(total_timesteps=192, eval_freq=0)
         result = agent.evaluate(num_episodes=3, deterministic=True)
@@ -101,8 +111,14 @@ class TestDoubleMachineConvergence(unittest.TestCase):
         env = _make_env(machine_configs=configs, max_steps=100, seed=21)
 
         agent = MultiAgentPPO(
-            env, n_steps=64, batch_size=32, n_epochs=4,
-            learning_rate=5e-4, ent_coef=0.02, seed=21, verbose=0,
+            env,
+            n_steps=64,
+            batch_size=32,
+            n_epochs=4,
+            learning_rate=5e-4,
+            ent_coef=0.02,
+            seed=21,
+            verbose=0,
         )
 
         # 训练前评估（随机初始化策略，用 stochastic 评估反映分布质量）
@@ -120,7 +136,8 @@ class TestDoubleMachineConvergence(unittest.TestCase):
         # 允许 15% 容差吸收 env 随机性与 stochastic 评估的采样噪声
         threshold = pre_reward * 0.85 - 20.0
         self.assertGreaterEqual(
-            post_reward, threshold,
+            post_reward,
+            threshold,
             f"训练退化: pre={pre_reward:.2f} post={post_reward:.2f}",
         )
 
@@ -163,24 +180,35 @@ class TestThreeMachineOutperformsSingle(unittest.TestCase):
 
         # 三机环境（相同固定策略）
         env_multi = _make_env(
-            machine_configs=DEFAULT_MACHINE_CONFIGS, max_steps=100, seed=31,
+            machine_configs=DEFAULT_MACHINE_CONFIGS,
+            max_steps=100,
+            seed=31,
         )
         multi_mean, _ = self._eval_fixed_policy(env_multi, episodes=10, action=1)
 
         # 三机环境有更多量子资源，固定量子策略下吞吐量更高 → 奖励更高
         self.assertGreater(
-            multi_mean, single_mean,
+            multi_mean,
+            single_mean,
             f"三机环境({multi_mean:.2f})未优于单机环境({single_mean:.2f})",
         )
 
     def test_three_machine_mappo_learns_and_beats_random(self):
         """三机 MAPPO 训练后奖励应显著高于未训练（随机初始化）策略。"""
         env = _make_env(
-            machine_configs=DEFAULT_MACHINE_CONFIGS, max_steps=100, seed=31,
+            machine_configs=DEFAULT_MACHINE_CONFIGS,
+            max_steps=100,
+            seed=31,
         )
         agent = MultiAgentPPO(
-            env, n_steps=64, batch_size=32, n_epochs=3,
-            learning_rate=3e-4, ent_coef=0.01, seed=31, verbose=0,
+            env,
+            n_steps=64,
+            batch_size=32,
+            n_epochs=3,
+            learning_rate=3e-4,
+            ent_coef=0.01,
+            seed=31,
+            verbose=0,
         )
 
         # 未训练（随机初始化）策略评估
@@ -197,12 +225,14 @@ class TestThreeMachineOutperformsSingle(unittest.TestCase):
         # MAPPO 应学到有效策略：训练后奖励不低于训练前
         # （允许容差吸收 env 随机性与确定性评估的 argmax 抖动）
         self.assertGreaterEqual(
-            post_reward, pre_reward * 0.9,
+            post_reward,
+            pre_reward * 0.9,
             f"MAPPO 未学习: pre={pre_reward:.2f} post={post_reward:.2f}",
         )
         # 训练后应达到合理的绝对奖励水平（量子调度有效）
         self.assertGreater(
-            post_reward, 200.0,
+            post_reward,
+            200.0,
             f"训练后奖励过低: {post_reward:.2f}",
         )
 
@@ -216,10 +246,17 @@ class TestNoMemoryLeak(unittest.TestCase):
     def test_no_memory_growth_across_rollouts(self):
         """连续多轮训练 rollout 后，张量数量与显存不应持续增长。"""
         env = _make_env(
-            machine_configs=DEFAULT_MACHINE_CONFIGS[:2], max_steps=60, seed=41,
+            machine_configs=DEFAULT_MACHINE_CONFIGS[:2],
+            max_steps=60,
+            seed=41,
         )
         agent = MultiAgentPPO(
-            env, n_steps=64, batch_size=32, n_epochs=2, seed=41, verbose=0,
+            env,
+            n_steps=64,
+            batch_size=32,
+            n_epochs=2,
+            seed=41,
+            verbose=0,
         )
 
         # 预热：2 轮 rollout
@@ -244,7 +281,8 @@ class TestNoMemoryLeak(unittest.TestCase):
         # 对象数量增长应小于 5%（允许正常波动）
         growth_ratio = (after_objs - base_objs) / max(base_objs, 1)
         self.assertLess(
-            growth_ratio, 0.05,
+            growth_ratio,
+            0.05,
             f"GC 对象增长 {growth_ratio:.2%}，疑似内存泄漏",
         )
 
@@ -261,11 +299,18 @@ class TestNoMemoryLeak(unittest.TestCase):
             self.skipTest("CUDA 不可用，跳过显存泄漏测试")
 
         env = _make_env(
-            machine_configs=DEFAULT_MACHINE_CONFIGS, max_steps=60, seed=42,
+            machine_configs=DEFAULT_MACHINE_CONFIGS,
+            max_steps=60,
+            seed=42,
         )
         agent = MultiAgentPPO(
-            env, n_steps=64, batch_size=32, n_epochs=2,
-            seed=42, verbose=0, device="cuda",
+            env,
+            n_steps=64,
+            batch_size=32,
+            n_epochs=2,
+            seed=42,
+            verbose=0,
+            device="cuda",
         )
 
         agent.train(total_timesteps=128, eval_freq=0)
@@ -279,7 +324,8 @@ class TestNoMemoryLeak(unittest.TestCase):
         # 显存峰值增长应小于 20%（允许 buffer 一次性分配波动）
         if peak1 > 0:
             self.assertLess(
-                peak2 / peak1, 1.2,
+                peak2 / peak1,
+                1.2,
                 f"显存峰值膨胀: {peak1} -> {peak2}",
             )
 
@@ -292,7 +338,9 @@ class TestActionAggregation(unittest.TestCase):
 
     def setUp(self):
         self.env = _make_env(
-            machine_configs=DEFAULT_MACHINE_CONFIGS, max_steps=40, seed=51,
+            machine_configs=DEFAULT_MACHINE_CONFIGS,
+            max_steps=40,
+            seed=51,
         )
         self.wrapper = MultiAgentEnvWrapper(self.env)
         self.env.reset(seed=51)
@@ -310,8 +358,7 @@ class TestActionAggregation(unittest.TestCase):
         for m in self.env._machines:
             m.available = True
         target = self.wrapper.machine_names[0]
-        actions = {name: (1 if name == target else 0)
-                   for name in self.wrapper.machine_names}
+        actions = {name: (1 if name == target else 0) for name in self.wrapper.machine_names}
         env_action, chosen = self.wrapper.aggregate_actions(actions)
         self.assertEqual(env_action, 1)
         self.assertEqual(self.wrapper.machine_names[chosen], target)
@@ -369,18 +416,23 @@ class TestSaveLoad(unittest.TestCase):
     def test_save_and_load_produces_same_predictions(self):
         """保存后加载的模型应产出与原模型相同的确定性动作。"""
         env = _make_env(
-            machine_configs=DEFAULT_MACHINE_CONFIGS[:2], max_steps=40, seed=61,
+            machine_configs=DEFAULT_MACHINE_CONFIGS[:2],
+            max_steps=40,
+            seed=61,
         )
         agent = MultiAgentPPO(
-            env, n_steps=32, batch_size=16, n_epochs=1, seed=61, verbose=0,
+            env,
+            n_steps=32,
+            batch_size=16,
+            n_epochs=1,
+            seed=61,
+            verbose=0,
         )
         # 简短训练使参数非默认
         agent.train(total_timesteps=64, eval_freq=0)
 
         # 保存
-        save_path = os.path.join(
-            os.path.dirname(__file__), "_test_mappo_model"
-        )
+        save_path = os.path.join(os.path.dirname(__file__), "_test_mappo_model")
         agent.save(save_path)
 
         # 同状态下的确定性动作
@@ -389,10 +441,17 @@ class TestSaveLoad(unittest.TestCase):
 
         # 新 agent 加载
         env2 = _make_env(
-            machine_configs=DEFAULT_MACHINE_CONFIGS[:2], max_steps=40, seed=61,
+            machine_configs=DEFAULT_MACHINE_CONFIGS[:2],
+            max_steps=40,
+            seed=61,
         )
         agent_loaded = MultiAgentPPO(
-            env2, n_steps=32, batch_size=16, n_epochs=1, seed=61, verbose=0,
+            env2,
+            n_steps=32,
+            batch_size=16,
+            n_epochs=1,
+            seed=61,
+            verbose=0,
         )
         agent_loaded.load(save_path)
         env2.reset(seed=61)
@@ -409,16 +468,18 @@ class TestSaveLoad(unittest.TestCase):
     def test_load_mismatched_num_agents_raises(self):
         """加载时 Agent 数量不匹配应抛出 ValueError。"""
         env1 = _make_env(
-            machine_configs=DEFAULT_MACHINE_CONFIGS[:1], max_steps=20, seed=71,
+            machine_configs=DEFAULT_MACHINE_CONFIGS[:1],
+            max_steps=20,
+            seed=71,
         )
         agent1 = MultiAgentPPO(env1, n_steps=16, verbose=0, seed=71)
-        save_path = os.path.join(
-            os.path.dirname(__file__), "_test_mappo_mismatch"
-        )
+        save_path = os.path.join(os.path.dirname(__file__), "_test_mappo_mismatch")
         agent1.save(save_path)
 
         env3 = _make_env(
-            machine_configs=DEFAULT_MACHINE_CONFIGS[:3], max_steps=20, seed=72,
+            machine_configs=DEFAULT_MACHINE_CONFIGS[:3],
+            max_steps=20,
+            seed=72,
         )
         agent3 = MultiAgentPPO(env3, n_steps=16, verbose=0, seed=72)
         with self.assertRaises(ValueError):

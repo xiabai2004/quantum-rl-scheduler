@@ -52,6 +52,7 @@ from src.scheduler.env import (
 # 多智能体环境包装器
 # ---------------------------------------------------------------------------
 
+
 class MultiAgentEnvWrapper:
     """
     多智能体环境包装器：在不修改 QuantumSchedulingEnv 公共接口的前提下，
@@ -141,9 +142,7 @@ class MultiAgentEnvWrapper:
             形状 (local_obs_dim * num_agents,) 的 float32 向量
         """
         local_obs = self.get_local_observations()
-        return np.concatenate(
-            [local_obs[name] for name in self.machine_names]
-        ).astype(np.float32)
+        return np.concatenate([local_obs[name] for name in self.machine_names]).astype(np.float32)
 
     # ------------------------------------------------------------------
     # 动作聚合与路由
@@ -164,9 +163,7 @@ class MultiAgentEnvWrapper:
         m = self.env._machines[machine_idx]
         return m.fidelity * m.available_ratio / (1.0 + m.quantum_queue)
 
-    def aggregate_actions(
-        self, actions: dict[str, int]
-    ) -> tuple[int, int | None]:
+    def aggregate_actions(self, actions: dict[str, int]) -> tuple[int, int | None]:
         """
         聚合各 Agent 的动作投票为单个 env action 和选中的机器索引。
 
@@ -262,7 +259,7 @@ class MultiAgentEnvWrapper:
             for idx, m in enumerate(self.env._machines):
                 original_available[idx] = m.available
                 # 仅保留被选中机器在线（若它原本就在线）
-                m.available = (idx == chosen_idx)
+                m.available = idx == chosen_idx
 
         try:
             _next_obs, reward, terminated, truncated, info = self.env.step(env_action)
@@ -273,9 +270,7 @@ class MultiAgentEnvWrapper:
                     m.available = original_available[idx]
 
         info = dict(info)
-        info["chosen_machine"] = (
-            self.machine_names[chosen_idx] if chosen_idx is not None else None
-        )
+        info["chosen_machine"] = self.machine_names[chosen_idx] if chosen_idx is not None else None
         info["env_action"] = env_action
 
         local_obs = self.get_local_observations()
@@ -303,8 +298,10 @@ class MultiAgentEnvWrapper:
 # 神经网络定义
 # ---------------------------------------------------------------------------
 
-def _build_mlp(input_dim: int, output_dim: int, hidden_sizes: tuple[int, ...],
-               activation: type = nn.Tanh) -> nn.Sequential:
+
+def _build_mlp(
+    input_dim: int, output_dim: int, hidden_sizes: tuple[int, ...], activation: type = nn.Tanh
+) -> nn.Sequential:
     """
     构建简单的多层感知机（MLP）。
 
@@ -338,8 +335,9 @@ class ActorNet(nn.Module):
     使用 Tanh 激活函数（PPO 常用配置，训练稳定）。
     """
 
-    def __init__(self, obs_dim: int, action_dim: int = 3,
-                 hidden_sizes: tuple[int, ...] = (128, 64)):
+    def __init__(
+        self, obs_dim: int, action_dim: int = 3, hidden_sizes: tuple[int, ...] = (128, 64)
+    ):
         """
         初始化 Actor 网络。
 
@@ -416,8 +414,7 @@ class CentralizedCritic(nn.Module):
     指导各 Actor 的优势函数计算。
     """
 
-    def __init__(self, global_state_dim: int,
-                 hidden_sizes: tuple[int, ...] = (256, 128)):
+    def __init__(self, global_state_dim: int, hidden_sizes: tuple[int, ...] = (256, 128)):
         """
         初始化 Critic 网络。
 
@@ -445,6 +442,7 @@ class CentralizedCritic(nn.Module):
 # 经验回放缓冲区
 # ---------------------------------------------------------------------------
 
+
 class RolloutBuffer:
     """
     MAPPO 经验回放缓冲区。
@@ -456,8 +454,7 @@ class RolloutBuffer:
     所有数据在写入时即 detach/转 numpy，避免持有计算图导致内存泄漏。
     """
 
-    def __init__(self, n_steps: int, num_agents: int, local_obs_dim: int,
-                 global_state_dim: int):
+    def __init__(self, n_steps: int, num_agents: int, local_obs_dim: int, global_state_dim: int):
         """
         初始化缓冲区。
 
@@ -474,20 +471,13 @@ class RolloutBuffer:
 
         # 每 Agent 独立数据
         self.local_obs = [
-            np.zeros((n_steps, local_obs_dim), dtype=np.float32)
-            for _ in range(num_agents)
+            np.zeros((n_steps, local_obs_dim), dtype=np.float32) for _ in range(num_agents)
         ]
-        self.actions = [
-            np.zeros(n_steps, dtype=np.int64) for _ in range(num_agents)
-        ]
-        self.log_probs = [
-            np.zeros(n_steps, dtype=np.float32) for _ in range(num_agents)
-        ]
+        self.actions = [np.zeros(n_steps, dtype=np.int64) for _ in range(num_agents)]
+        self.log_probs = [np.zeros(n_steps, dtype=np.float32) for _ in range(num_agents)]
         # 共享数据
         self.rewards = np.zeros(n_steps, dtype=np.float32)
-        self.global_states = np.zeros(
-            (n_steps, global_state_dim), dtype=np.float32
-        )
+        self.global_states = np.zeros((n_steps, global_state_dim), dtype=np.float32)
         self.dones = np.zeros(n_steps, dtype=np.float32)
         self.values = np.zeros(n_steps, dtype=np.float32)
 
@@ -559,11 +549,7 @@ class RolloutBuffer:
         for t in reversed(range(n)):
             next_value = last_value if t == n - 1 else self.values[t + 1]
             non_terminal = 1.0 - self.dones[t]
-            delta = (
-                self.rewards[t]
-                + gamma * next_value * non_terminal
-                - self.values[t]
-            )
+            delta = self.rewards[t] + gamma * next_value * non_terminal - self.values[t]
             last_gae = delta + gamma * gae_lambda * non_terminal * last_gae
             advantages[t] = last_gae
         returns = advantages + self.values[:n]
@@ -575,6 +561,7 @@ class RolloutBuffer:
 # ---------------------------------------------------------------------------
 # 核心类：MultiAgentPPO
 # ---------------------------------------------------------------------------
+
 
 class MultiAgentPPO:
     """
@@ -678,18 +665,13 @@ class MultiAgentPPO:
             ActorNet(self.local_obs_dim, 3, actor_hidden).to(self.device)
             for _ in range(self.num_agents)
         ]
-        self.critic = CentralizedCritic(
-            self.global_state_dim, critic_hidden
-        ).to(self.device)
+        self.critic = CentralizedCritic(self.global_state_dim, critic_hidden).to(self.device)
 
         # 优化器（每个 Actor + Critic 各一个，或合并；这里独立便于精细控制）
         self.actor_optimizers = [
-            Adam(actor.parameters(), lr=learning_rate, eps=1e-5)
-            for actor in self.actors
+            Adam(actor.parameters(), lr=learning_rate, eps=1e-5) for actor in self.actors
         ]
-        self.critic_optimizer = Adam(
-            self.critic.parameters(), lr=learning_rate, eps=1e-5
-        )
+        self.critic_optimizer = Adam(self.critic.parameters(), lr=learning_rate, eps=1e-5)
 
         # rollout 缓冲区
         self.buffer = RolloutBuffer(
@@ -748,9 +730,7 @@ class MultiAgentPPO:
         with torch.no_grad():
             for i, name in enumerate(self.machine_names):
                 obs_t = self._to_tensor(local_obs[name]).unsqueeze(0)
-                action, log_prob, _ = self.actors[i].get_action(
-                    obs_t, deterministic=deterministic
-                )
+                action, log_prob, _ = self.actors[i].get_action(obs_t, deterministic=deterministic)
                 actions[name] = int(action.item())
                 log_probs.append(float(log_prob.item()))
             # 集中式 Critic 估值
@@ -801,9 +781,7 @@ class MultiAgentPPO:
             # ---- 2. 计算 GAE 优势 ----
             # Bootstrap 最后一个状态的价值
             with torch.no_grad():
-                last_value_t = self.critic(
-                    self._global_state_tensor(self._last_global_state)
-                )
+                last_value_t = self.critic(self._global_state_tensor(self._last_global_state))
                 last_value = float(last_value_t.item())
             advantages_per_agent, returns = self.buffer.compute_gae(
                 last_value, self.gamma, self.gae_lambda
@@ -824,9 +802,13 @@ class MultiAgentPPO:
                 )
 
             # ---- 4. 周期性评估 ----
-            if eval_freq > 0 and self.total_timesteps >= eval_freq and (
-                self.total_timesteps // eval_freq
-                > (self.total_timesteps - self.n_steps) // eval_freq
+            if (
+                eval_freq > 0
+                and self.total_timesteps >= eval_freq
+                and (
+                    self.total_timesteps // eval_freq
+                    > (self.total_timesteps - self.n_steps) // eval_freq
+                )
             ):
                 eval_result = self.evaluate(num_episodes=n_eval_episodes)
                 if self.verbose >= 1:
@@ -853,9 +835,7 @@ class MultiAgentPPO:
 
             # 写入缓冲区（local_obs 是写入"当前"步的观测，即动作产生前的观测）
             self.buffer.add(
-                local_obs=[
-                    self._last_obs[name] for name in self.machine_names
-                ],
+                local_obs=[self._last_obs[name] for name in self.machine_names],
                 actions=[actions[name] for name in self.machine_names],
                 log_probs=log_probs,
                 reward=reward,
@@ -894,8 +874,12 @@ class MultiAgentPPO:
         """
         n = self.buffer.pos
         if n == 0:
-            return {"mean_reward": 0.0, "mean_actor_loss": 0.0,
-                    "critic_loss": 0.0, "mean_entropy": 0.0}
+            return {
+                "mean_reward": 0.0,
+                "mean_actor_loss": 0.0,
+                "critic_loss": 0.0,
+                "mean_entropy": 0.0,
+            }
 
         # 全局状态和回报对所有 Agent 共享
         global_states = self.buffer.global_states[:n]
@@ -926,36 +910,26 @@ class MultiAgentPPO:
 
                 self.critic_optimizer.zero_grad()
                 critic_loss.backward()
-                nn.utils.clip_grad_norm_(
-                    self.critic.parameters(), self.max_grad_norm
-                )
+                nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
                 self.critic_optimizer.step()
 
                 # 每个 Agent 独立更新 Actor
                 batch_adv = self._to_tensor(norm_advantages[batch_idx])
                 for i in range(self.num_agents):
-                    obs_batch = self._to_tensor(
-                        self.buffer.local_obs[i][batch_idx]
-                    )
+                    obs_batch = self._to_tensor(self.buffer.local_obs[i][batch_idx])
                     act_batch = torch.as_tensor(
                         self.buffer.actions[i][batch_idx],
                         dtype=torch.long,
                         device=self.device,
                     )
-                    old_log_prob_batch = self._to_tensor(
-                        self.buffer.log_probs[i][batch_idx]
-                    )
+                    old_log_prob_batch = self._to_tensor(self.buffer.log_probs[i][batch_idx])
 
-                    new_log_prob, entropy = self.actors[i].evaluate_actions(
-                        obs_batch, act_batch
-                    )
+                    new_log_prob, entropy = self.actors[i].evaluate_actions(obs_batch, act_batch)
                     # PPO 比率
                     ratio = torch.exp(new_log_prob - old_log_prob_batch)
                     surr1 = ratio * batch_adv
                     surr2 = (
-                        torch.clamp(ratio, 1.0 - self.clip_range,
-                                    1.0 + self.clip_range)
-                        * batch_adv
+                        torch.clamp(ratio, 1.0 - self.clip_range, 1.0 + self.clip_range) * batch_adv
                     )
                     actor_loss = -torch.min(surr1, surr2).mean()
                     # 熵正则（鼓励探索）
@@ -964,9 +938,7 @@ class MultiAgentPPO:
 
                     self.actor_optimizers[i].zero_grad()
                     loss.backward()
-                    nn.utils.clip_grad_norm_(
-                        self.actors[i].parameters(), self.max_grad_norm
-                    )
+                    nn.utils.clip_grad_norm_(self.actors[i].parameters(), self.max_grad_norm)
                     self.actor_optimizers[i].step()
 
                     total_actor_loss += float(actor_loss.item())
@@ -1004,9 +976,7 @@ class MultiAgentPPO:
         env_action, _ = self.wrapper.aggregate_actions(actions)
         return env_action
 
-    def evaluate(
-        self, num_episodes: int = 10, deterministic: bool = True
-    ) -> dict[str, float]:
+    def evaluate(self, num_episodes: int = 10, deterministic: bool = True) -> dict[str, float]:
         """
         评估 MAPPO 智能体性能。
 
@@ -1148,9 +1118,7 @@ class MultiAgentPPO:
 if __name__ == "__main__":
     from src.scheduler.env import DEFAULT_MACHINE_CONFIGS
 
-    env = QuantumSchedulingEnv(
-        max_steps=200, machine_configs=DEFAULT_MACHINE_CONFIGS
-    )
+    env = QuantumSchedulingEnv(max_steps=200, machine_configs=DEFAULT_MACHINE_CONFIGS)
     agent = MultiAgentPPO(env, n_steps=256, batch_size=64, n_epochs=4, verbose=1)
     print("=" * 60)
     print("MAPPO 智能体初始化完成")

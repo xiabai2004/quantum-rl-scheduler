@@ -25,80 +25,30 @@ from src.scheduler.env import DEFAULT_MACHINE_CONFIGS, QuantumSchedulingEnv
 
 def parse_args():
     """解析命令行参数"""
-    parser = argparse.ArgumentParser(
-        description="训练 PPO-LSTM 智能体进行量子任务调度"
+    parser = argparse.ArgumentParser(description="训练 PPO-LSTM 智能体进行量子任务调度")
+    parser.add_argument("--timesteps", type=int, default=50000, help="训练总步数（默认 50000）")
+    parser.add_argument("--seed", type=int, default=42, help="随机种子（默认 42）")
+    parser.add_argument("--n-lstm-layers", type=int, default=1, help="LSTM 层数（默认 1）")
+    parser.add_argument(
+        "--lstm-hidden-size", type=int, default=64, help="LSTM 隐藏层大小（默认 64）"
+    )
+    parser.add_argument("--learning-rate", type=float, default=3e-4, help="学习率（默认 3e-4）")
+    parser.add_argument("--n-steps", type=int, default=2048, help="每次更新的步数（默认 2048）")
+    parser.add_argument("--batch-size", type=int, default=64, help="批次大小（默认 64）")
+    parser.add_argument(
+        "--multi-machine", action="store_true", help="使用多机器调度模式（3台真机）"
     )
     parser.add_argument(
-        "--timesteps",
-        type=int,
-        default=50000,
-        help="训练总步数（默认 50000）"
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="随机种子（默认 42）"
-    )
-    parser.add_argument(
-        "--n-lstm-layers",
-        type=int,
-        default=1,
-        help="LSTM 层数（默认 1）"
-    )
-    parser.add_argument(
-        "--lstm-hidden-size",
-        type=int,
-        default=64,
-        help="LSTM 隐藏层大小（默认 64）"
-    )
-    parser.add_argument(
-        "--learning-rate",
-        type=float,
-        default=3e-4,
-        help="学习率（默认 3e-4）"
-    )
-    parser.add_argument(
-        "--n-steps",
-        type=int,
-        default=2048,
-        help="每次更新的步数（默认 2048）"
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=64,
-        help="批次大小（默认 64）"
-    )
-    parser.add_argument(
-        "--multi-machine",
-        action="store_true",
-        help="使用多机器调度模式（3台真机）"
-    )
-    parser.add_argument(
-        "--log-dir",
-        type=str,
-        default="./logs/lstm_ppo",
-        help="日志目录（默认 ./logs/lstm_ppo）"
+        "--log-dir", type=str, default="./logs/lstm_ppo", help="日志目录（默认 ./logs/lstm_ppo）"
     )
     parser.add_argument(
         "--save-path",
         type=str,
         default="./models/lstm_ppo_agent",
-        help="模型保存路径（默认 ./models/lstm_ppo_agent）"
+        help="模型保存路径（默认 ./models/lstm_ppo_agent）",
     )
-    parser.add_argument(
-        "--eval-freq",
-        type=int,
-        default=5000,
-        help="评估频率（默认每 5000 步）"
-    )
-    parser.add_argument(
-        "--eval-episodes",
-        type=int,
-        default=10,
-        help="每次评估的回合数（默认 10）"
-    )
+    parser.add_argument("--eval-freq", type=int, default=5000, help="评估频率（默认每 5000 步）")
+    parser.add_argument("--eval-episodes", type=int, default=10, help="每次评估的回合数（默认 10）")
 
     return parser.parse_args()
 
@@ -213,6 +163,7 @@ def main():
     os.makedirs(args.log_dir, exist_ok=True)
 
     import json
+
     with open(results_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
 

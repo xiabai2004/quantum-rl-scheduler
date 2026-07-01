@@ -43,49 +43,50 @@ from gymnasium import spaces
 # ---------------------------------------------------------------------------
 
 # 状态向量索引（扩展版：14维，包含物理噪声和拓扑特征）
-OBS_QUBIT_AVAILABILITY = 0   # 当前可用量子比特比率
-OBS_QUEUE_LENGTH = 1          # 任务队列长度（归一化）
-OBS_AVG_WAIT_TIME = 2         # 平均等待时间（归一化）
-OBS_FIDELITY = 3              # 量子比特平均保真度
-OBS_CLASSICAL_LOAD = 4        # 经典计算资源负载
-OBS_QUANTUM_QUEUE_RATIO = 5   # 量子专用队列占比
-OBS_TIME_OF_DAY = 6           # 一天中的时间段（昼夜模拟）
-OBS_URGENCY_LEVEL = 7         # 当前任务紧急程度
-OBS_TASK_TYPE_QUANTUM = 8     # 当前任务是quantum类型
-OBS_TASK_TYPE_CLASSICAL = 9   # 当前任务是classical类型
-OBS_SINGLE_GATE_FIDELITY = 10 # 单比特门平均保真度（SPAM error 补数）
-OBS_TWO_GATE_FIDELITY = 11    # 两比特门平均保真度（CZ门误差率补数）
-OBS_COUPLING_DENSITY = 12     # 耦合图密度 = 实际连接数 / 全连接数
-OBS_AVG_CONNECTIVITY = 13     # 量子比特平均连通度 = 平均连接数 / max_connections
+OBS_QUBIT_AVAILABILITY = 0  # 当前可用量子比特比率
+OBS_QUEUE_LENGTH = 1  # 任务队列长度（归一化）
+OBS_AVG_WAIT_TIME = 2  # 平均等待时间（归一化）
+OBS_FIDELITY = 3  # 量子比特平均保真度
+OBS_CLASSICAL_LOAD = 4  # 经典计算资源负载
+OBS_QUANTUM_QUEUE_RATIO = 5  # 量子专用队列占比
+OBS_TIME_OF_DAY = 6  # 一天中的时间段（昼夜模拟）
+OBS_URGENCY_LEVEL = 7  # 当前任务紧急程度
+OBS_TASK_TYPE_QUANTUM = 8  # 当前任务是quantum类型
+OBS_TASK_TYPE_CLASSICAL = 9  # 当前任务是classical类型
+OBS_SINGLE_GATE_FIDELITY = 10  # 单比特门平均保真度（SPAM error 补数）
+OBS_TWO_GATE_FIDELITY = 11  # 两比特门平均保真度（CZ门误差率补数）
+OBS_COUPLING_DENSITY = 12  # 耦合图密度 = 实际连接数 / 全连接数
+OBS_AVG_CONNECTIVITY = 13  # 量子比特平均连通度 = 平均连接数 / max_connections
 
 OBS_DIM = 14  # 状态空间维度（从10扩展到14）
 
 # 动作常量
-ACTION_CLASSICAL = 0   # 分配到经典计算资源
-ACTION_QUANTUM = 1     # 分配到量子计算资源
-ACTION_HYBRID = 2      # 混合执行
+ACTION_CLASSICAL = 0  # 分配到经典计算资源
+ACTION_QUANTUM = 1  # 分配到量子计算资源
+ACTION_HYBRID = 2  # 混合执行
 
 # 奖励参数（修改后：增强正确执行的奖励）
-REWARD_QUANTUM_BASE = 10.0       # 量子执行基础奖励（不变）
-REWARD_CLASSICAL = 5.0            # 经典执行奖励（从3.0提升到5.0）
-REWARD_HYBRID = 7.0               # 混合执行奖励（新增，介于经典和量子之间）
+REWARD_QUANTUM_BASE = 10.0  # 量子执行基础奖励（不变）
+REWARD_CLASSICAL = 5.0  # 经典执行奖励（从3.0提升到5.0）
+REWARD_HYBRID = 7.0  # 混合执行奖励（新增，介于经典和量子之间）
 REWARD_WAIT_OVER_THRESHOLD = -0.1  # 等待超时惩罚（从-0.5降低到-0.1，减少惩罚强度）
-REWARD_LOW_QUBIT_UTIL = -1.0     # 量子比特利用率惩罚（从-2.0降低到-1.0）
-REWARD_MISMATCH = -2.0           # 错误分配惩罚（从-5.0降低到-2.0）
-REWARD_SUCCESS_BONUS = 3.0       # 任务成功完成奖励（新增）
+REWARD_LOW_QUBIT_UTIL = -1.0  # 量子比特利用率惩罚（从-2.0降低到-1.0）
+REWARD_MISMATCH = -2.0  # 错误分配惩罚（从-5.0降低到-2.0）
+REWARD_SUCCESS_BONUS = 3.0  # 任务成功完成奖励（新增）
 QUANTUM_SPEEDUP_RANGE = (2.0, 5.0)  # 量子加速比范围
 
 # 环境参数
-MAX_QUEUE_SIZE = 30              # 队列最大长度（用于归一化）
-MAX_WAIT_STEPS = 50              # 最大等待步数（超过此阈值开始惩罚）
-MAX_STEPS_DEFAULT = 500          # 默认最大步数（一个 episode）
-QUBIT_UTIL_THRESHOLD = 0.3       # 量子比特利用率低阈值
-INITIAL_QUEUE_RANGE = (5, 20)    # reset 时初始任务队列大小范围
+MAX_QUEUE_SIZE = 30  # 队列最大长度（用于归一化）
+MAX_WAIT_STEPS = 50  # 最大等待步数（超过此阈值开始惩罚）
+MAX_STEPS_DEFAULT = 500  # 默认最大步数（一个 episode）
+QUBIT_UTIL_THRESHOLD = 0.3  # 量子比特利用率低阈值
+INITIAL_QUEUE_RANGE = (5, 20)  # reset 时初始任务队列大小范围
 
 
 # ---------------------------------------------------------------------------
 # 辅助数据结构
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class Task:
@@ -101,6 +102,7 @@ class Task:
         priority       : 优先级 1-5
         execution_time : 预估执行时间（步数），与任务规模正相关
     """
+
     task_id: str
     task_type: str  # "quantum", "classical", "universal"
     qubit_count: int = 0
@@ -121,6 +123,7 @@ class QuantumResource:
         fidelity        : 当前量子比特平均保真度（0-1）
         quantum_queue   : 量子专用队列中的任务数
     """
+
     total_qubits: int = 287
     available_ratio: float = 1.0
     fidelity: float = 0.98
@@ -136,6 +139,7 @@ class ClassicalResource:
         load  : 经典计算资源负载（0-1），1 表示满载
         queue : 经典资源队列中的任务数
     """
+
     load: float = 0.0
     queue: int = 0
 
@@ -162,6 +166,7 @@ class QuantumMachine:
         coupling_density : 耦合图密度 = 实际连接数 / 全连接数
         avg_connectivity : 量子比特平均连通度 = 平均连接数 / max_connections
     """
+
     name: str = "tianyan_s"
     total_qubits: int = 287
     available_ratio: float = 1.0
@@ -189,15 +194,11 @@ class QuantumMachine:
         """
         # 单比特门保真度：基于 fidelity 的噪声衰减
         noise_single = rng.uniform(-0.02, 0.0)
-        self.single_gate_fidelity = float(np.clip(
-            self.fidelity * 0.99 + noise_single, 0.0, 1.0
-        ))
+        self.single_gate_fidelity = float(np.clip(self.fidelity * 0.99 + noise_single, 0.0, 1.0))
 
         # 两比特门保真度：基于 fidelity 的噪声衰减（两比特门误差更大）
         noise_two = rng.uniform(-0.03, 0.01)
-        self.two_gate_fidelity = float(np.clip(
-            self.fidelity * 0.95 + noise_two, 0.0, 1.0
-        ))
+        self.two_gate_fidelity = float(np.clip(self.fidelity * 0.95 + noise_two, 0.0, 1.0))
 
     def update_topology_features(self) -> None:
         """
@@ -254,6 +255,7 @@ REAL_SUBMIT_PROBABILITY_DEFAULT = 0.0
 # ---------------------------------------------------------------------------
 # 核心环境类
 # ---------------------------------------------------------------------------
+
 
 class QuantumSchedulingEnv(gym.Env):
     """
@@ -681,8 +683,7 @@ class QuantumSchedulingEnv(gym.Env):
             f"  |  量子队列: {self._quantum.quantum_queue}",
             f"  [经典资源] 负载: {self._classical.load:.2%}"
             f"  |  经典队列: {self._classical.queue}",
-            f"  [任务队列]  长度: {len(self._task_queue)}"
-            f"  |  已调度: {self._total_scheduled}",
+            f"  [任务队列]  长度: {len(self._task_queue)}" f"  |  已调度: {self._total_scheduled}",
             f"  [统计] 量子成功: {self._quantum_success}"
             f"  |  经典成功: {self._classical_success}"
             f"  |  混合成功: {self._hybrid_success}"
@@ -779,7 +780,7 @@ class QuantumSchedulingEnv(gym.Env):
         urgency_probs = [0.05, 0.10, 0.20, 0.20, 0.15, 0.10, 0.08, 0.05, 0.05, 0.02]
         urgency = float(rng.choice(urgency_options, p=urgency_probs))
 
-        base_time = int(qubits ** 0.6)
+        base_time = int(qubits**0.6)
         execution_time = max(1, base_time + int(rng.choice([-1, 0, 0, 0, 1, 2])))
 
         task_type_options = ["quantum", "quantum", "classical", "classical", "universal"]
@@ -956,9 +957,7 @@ class QuantumSchedulingEnv(gym.Env):
             )
         except Exception as e:
             # 真机提交失败不应影响 RL 训练，仅记录
-            self._render_log.append(
-                f"[真机] {machine.name} 提交失败: {str(e)[:60]}"
-            )
+            self._render_log.append(f"[真机] {machine.name} 提交失败: {str(e)[:60]}")
 
     def _recompute_aggregate(self) -> None:
         """根据所有机器状态重算 self._quantum 聚合视图。
@@ -1083,13 +1082,11 @@ class QuantumSchedulingEnv(gym.Env):
         # ---- 每台量子机器独立波动 ----
         for m in self._machines:
             # 可用比特比率波动
-            m.available_ratio = float(np.clip(
-                m.available_ratio + rng.uniform(-0.1, 0.1), 0.05, 1.0
-            ))
+            m.available_ratio = float(
+                np.clip(m.available_ratio + rng.uniform(-0.1, 0.1), 0.05, 1.0)
+            )
             # 保真度衰减 + 随机恢复
-            m.fidelity = float(np.clip(
-                m.fidelity - 0.002 + rng.uniform(0.0, 0.01), 0.7, 0.999
-            ))
+            m.fidelity = float(np.clip(m.fidelity - 0.002 + rng.uniform(0.0, 0.01), 0.7, 0.999))
             # 更新物理噪声特征（基于新的 fidelity）
             m.update_noise_features(rng)
             # 在线状态随机波动（模拟真机维护/校准，5% 概率翻转）
@@ -1106,9 +1103,7 @@ class QuantumSchedulingEnv(gym.Env):
         self._recompute_aggregate()
 
         # 经典资源波动
-        self._classical.load = np.clip(
-            self._classical.load + rng.uniform(-0.15, 0.15), 0.0, 1.0
-        )
+        self._classical.load = np.clip(self._classical.load + rng.uniform(-0.15, 0.15), 0.0, 1.0)
         # 经典队列完成一些任务
         completed_c = 0
         for _ in range(self._classical.queue):
@@ -1205,7 +1200,9 @@ class QuantumSchedulingEnv(gym.Env):
         # 添加任务类型编码
         if self._current_task is not None:
             obs[OBS_TASK_TYPE_QUANTUM] = 1.0 if self._current_task.task_type == "quantum" else 0.0
-            obs[OBS_TASK_TYPE_CLASSICAL] = 1.0 if self._current_task.task_type == "classical" else 0.0
+            obs[OBS_TASK_TYPE_CLASSICAL] = (
+                1.0 if self._current_task.task_type == "classical" else 0.0
+            )
         else:
             obs[OBS_TASK_TYPE_QUANTUM] = 0.0
             obs[OBS_TASK_TYPE_CLASSICAL] = 0.0
@@ -1214,23 +1211,36 @@ class QuantumSchedulingEnv(gym.Env):
         if self._machines:
             total_q = sum(m.total_qubits for m in self._machines)
             if total_q > 0:
-                obs[OBS_SINGLE_GATE_FIDELITY] = float(np.clip(
-                    sum(m.single_gate_fidelity * m.total_qubits for m in self._machines) / total_q,
-                    0.0, 1.0
-                ))
-                obs[OBS_TWO_GATE_FIDELITY] = float(np.clip(
-                    sum(m.two_gate_fidelity * m.total_qubits for m in self._machines) / total_q,
-                    0.0, 1.0
-                ))
+                obs[OBS_SINGLE_GATE_FIDELITY] = float(
+                    np.clip(
+                        sum(m.single_gate_fidelity * m.total_qubits for m in self._machines)
+                        / total_q,
+                        0.0,
+                        1.0,
+                    )
+                )
+                obs[OBS_TWO_GATE_FIDELITY] = float(
+                    np.clip(
+                        sum(m.two_gate_fidelity * m.total_qubits for m in self._machines) / total_q,
+                        0.0,
+                        1.0,
+                    )
+                )
                 # 阶段2：拓扑特征（所有机器加权平均）
-                obs[OBS_COUPLING_DENSITY] = float(np.clip(
-                    sum(m.coupling_density * m.total_qubits for m in self._machines) / total_q,
-                    0.0, 1.0
-                ))
-                obs[OBS_AVG_CONNECTIVITY] = float(np.clip(
-                    sum(m.avg_connectivity * m.total_qubits for m in self._machines) / total_q,
-                    0.0, 1.0
-                ))
+                obs[OBS_COUPLING_DENSITY] = float(
+                    np.clip(
+                        sum(m.coupling_density * m.total_qubits for m in self._machines) / total_q,
+                        0.0,
+                        1.0,
+                    )
+                )
+                obs[OBS_AVG_CONNECTIVITY] = float(
+                    np.clip(
+                        sum(m.avg_connectivity * m.total_qubits for m in self._machines) / total_q,
+                        0.0,
+                        1.0,
+                    )
+                )
 
         return obs
 
@@ -1296,6 +1306,7 @@ class QuantumSchedulingEnv(gym.Env):
 # ---------------------------------------------------------------------------
 # Gymnasium 注册辅助函数
 # ---------------------------------------------------------------------------
+
 
 def register_env():
     """

@@ -46,6 +46,7 @@ app_module = sys.modules["src.visualization.app"]
 # 公共夹具
 # ============================================================
 
+
 @pytest.fixture(autouse=True)
 def reset_state():
     """快照并恢复全局 system_status / task_queue / 连接管理器，保证测试间隔离。"""
@@ -78,6 +79,7 @@ async def async_client():
 # ============================================================
 # 页面与基础 API 路由
 # ============================================================
+
 
 @pytest.mark.asyncio
 async def test_root_returns_html(async_client):
@@ -174,9 +176,7 @@ async def test_switch_strategy_valid(async_client):
 @pytest.mark.asyncio
 async def test_switch_strategy_invalid(async_client):
     """POST /api/strategy?strategy=Unknown 应返回 success=False。"""
-    resp = await async_client.post(
-        "/api/strategy", params={"strategy": "Unknown-Strategy"}
-    )
+    resp = await async_client.post("/api/strategy", params={"strategy": "Unknown-Strategy"})
     assert resp.status_code == 200
     assert resp.json()["success"] is False
 
@@ -203,6 +203,7 @@ async def test_update_status(async_client):
 # 真机状态与提交记录路由
 # ============================================================
 
+
 @pytest.mark.asyncio
 async def test_get_real_machines_no_client(async_client, monkeypatch):
     """GET /api/real-machines 无真机客户端时应返回空列表且 source=unavailable。"""
@@ -217,9 +218,7 @@ async def test_get_real_machines_no_client(async_client, monkeypatch):
 @pytest.mark.asyncio
 async def test_get_real_machines_with_client(async_client, monkeypatch):
     """GET /api/real-machines 有真机客户端时应返回机器列表且 source=cqlib。"""
-    machines = [
-        {"id": "1", "type": "superconducting", "status": "running", "name": "tianyan_s"}
-    ]
+    machines = [{"id": "1", "type": "superconducting", "status": "running", "name": "tianyan_s"}]
     monkeypatch.setattr(app_module, "_get_real_machines_status", lambda: machines)
     resp = await async_client.get("/api/real-machines")
     assert resp.status_code == 200
@@ -249,13 +248,12 @@ async def test_get_real_submissions(async_client, monkeypatch, tmp_path):
 # PPO 数据接口路由
 # ============================================================
 
+
 def _write_sim_results(tmp_path: Path, data: dict) -> None:
     """在 tmp_path/results 下写入一个仿真结果 JSON 文件。"""
     results_dir = tmp_path / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
-    (results_dir / "simulation_results_test.json").write_text(
-        json.dumps(data), encoding="utf-8"
-    )
+    (results_dir / "simulation_results_test.json").write_text(json.dumps(data), encoding="utf-8")
 
 
 @pytest.mark.asyncio
@@ -419,12 +417,14 @@ async def test_ppo_predict_success(async_client, monkeypatch):
 # WebSocket 端点
 # ============================================================
 
+
 def test_websocket_endpoint_init_ping_and_invalid_json():
     """测试 WebSocket /ws 端点：init 消息、ping 心跳、非法 JSON 处理。
 
     使用 fastapi.testclient.TestClient（基于 httpx）测试 WebSocket，
     并将 simulate_scheduler mock 为空操作以避免后台任务干扰。
     """
+
     async def _noop_simulate():
         """空操作后台任务，供 lifespan 创建后立即完成。"""
         return None
@@ -452,6 +452,7 @@ def test_websocket_endpoint_init_ping_and_invalid_json():
 # ============================================================
 # ConnectionManager 连接管理器
 # ============================================================
+
 
 @pytest.mark.asyncio
 async def test_connection_manager_connect_disconnect():
@@ -498,6 +499,7 @@ async def test_connection_manager_broadcast_removes_failed():
 # 辅助函数：_load_vue3_template
 # ============================================================
 
+
 def test_load_vue3_template_loads_file(monkeypatch):
     """_load_vue3_template 应加载前端 HTML 文件并缓存。"""
     monkeypatch.setattr(app_module, "_VUE3_HTML_TEMPLATE", None)
@@ -518,6 +520,7 @@ def test_load_vue3_template_fallback(monkeypatch):
 # ============================================================
 # 辅助函数：_get_real_cqlib_client
 # ============================================================
+
 
 def test_get_real_cqlib_client_no_api_key(monkeypatch):
     """无 TIANYAN_API_KEY 时应返回 None 并标记已检查。"""
@@ -565,6 +568,7 @@ def test_get_real_cqlib_client_exception_returns_none(monkeypatch):
 # 辅助函数：_get_real_machines_status
 # ============================================================
 
+
 def test_get_real_machines_status_no_client(monkeypatch):
     """无真机客户端时应返回空列表。"""
     monkeypatch.setattr(app_module, "_get_real_cqlib_client", lambda: None)
@@ -594,6 +598,7 @@ def test_get_real_machines_status_exception_returns_empty(monkeypatch):
 # ============================================================
 # 辅助函数：_load_real_submissions
 # ============================================================
+
 
 def test_load_real_submissions_file_missing(monkeypatch, tmp_path):
     """real_times.json 不存在时应返回空列表。"""
@@ -626,9 +631,7 @@ def test_load_real_submissions_non_list_returns_empty(monkeypatch, tmp_path):
     """JSON 内容非列表时应返回空列表。"""
     results_dir = tmp_path / "results"
     results_dir.mkdir()
-    (results_dir / "real_times.json").write_text(
-        json.dumps({"not": "a-list"}), encoding="utf-8"
-    )
+    (results_dir / "real_times.json").write_text(json.dumps({"not": "a-list"}), encoding="utf-8")
     monkeypatch.setattr(app_module, "_PROJECT_ROOT", str(tmp_path))
     assert app_module._load_real_submissions() == []
 
@@ -637,13 +640,12 @@ def test_load_real_submissions_non_list_returns_empty(monkeypatch, tmp_path):
 # 辅助函数：_get_ppo_model
 # ============================================================
 
+
 def test_get_ppo_model_no_file_returns_none(monkeypatch, tmp_path):
     """无模型文件时应返回 None。"""
     monkeypatch.setattr(app_module, "_ppo_model", None)
     monkeypatch.setattr(app_module, "_ppo_env", None)
-    monkeypatch.setattr(
-        "src.scheduler.env.QuantumSchedulingEnv", lambda **kw: MagicMock()
-    )
+    monkeypatch.setattr("src.scheduler.env.QuantumSchedulingEnv", lambda **kw: MagicMock())
     monkeypatch.setattr(app_module, "_PROJECT_ROOT", str(tmp_path))
     assert app_module._get_ppo_model() is None
 
@@ -681,6 +683,7 @@ def test_get_ppo_model_exception_returns_none(monkeypatch):
 # 后台任务：simulate_scheduler
 # ============================================================
 
+
 @pytest.mark.asyncio
 async def test_simulate_scheduler_one_iteration(monkeypatch):
     """测试 simulate_scheduler 单次迭代：mock asyncio.sleep 第二次抛 CancelledError 退出循环。"""
@@ -712,6 +715,7 @@ async def test_simulate_scheduler_one_iteration(monkeypatch):
 # ============================================================
 # 入口函数：start_web_server
 # ============================================================
+
 
 def test_start_web_server_invokes_uvicorn(monkeypatch):
     """start_web_server 应调用 uvicorn.run（mock 避免实际启动）。"""

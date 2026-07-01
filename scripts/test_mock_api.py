@@ -16,6 +16,7 @@ print("测试 1: 导入 Mock 客户端")
 print("=" * 60)
 try:
     from src.api.mock_client import MockTianyanClient, create_tianyan_client
+
     print("✅ MockTianyanClient 导入成功")
     print("✅ create_tianyan_client 导入成功")
 except Exception as e:
@@ -75,6 +76,7 @@ print("测试 5: 查询任务状态（Mock）")
 print("=" * 60)
 try:
     import time
+
     max_attempts = 20
     for attempt in range(max_attempts):
         status_info = client.get_task_status(task_id)

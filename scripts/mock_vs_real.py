@@ -3,6 +3,7 @@
 
 用真机实测数据对比 Mock 仿真预测，评估仿真保真度。
 """
+
 import os
 import sys
 import time
@@ -63,14 +64,16 @@ def run_mock_simulation(circuits, shots=512):
 
 def build_test_circuits():
     """构建测试电路"""
+
     def c(n, ins):
         return {"qubits": n, "gates": len(ins), "qcis": ins}
+
     return {
-        "H_1q":    c(1, "H Q0\nM Q0"),
-        "H2_1q":   c(1, "H Q0\nH Q0\nM Q0"),
+        "H_1q": c(1, "H Q0\nM Q0"),
+        "H2_1q": c(1, "H Q0\nH Q0\nM Q0"),
         "Bell_2q": c(2, "H Q0\nCZ Q0 Q1\nH Q1\nM Q0\nM Q1"),
         "deep_1q": c(1, "H Q0\nH Q0\nH Q0\nH Q0\nH Q0\nM Q0"),
-        "qft_3q":  c(3, "H Q0\nCZ Q0 Q1\nH Q1\nCZ Q1 Q2\nH Q2\nM Q0\nM Q1\nM Q2"),
+        "qft_3q": c(3, "H Q0\nCZ Q0 Q1\nH Q1\nCZ Q1 Q2\nH Q2\nM Q0\nM Q1\nM Q2"),
     }
 
 
@@ -184,4 +187,5 @@ def main():
 
 if __name__ == "__main__":
     from src.api.tianyan_cqlib import CqlibTianyanClient
+
     main()

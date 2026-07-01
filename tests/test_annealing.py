@@ -21,7 +21,7 @@ import numpy as np
 import torch
 from torch import nn
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.quantum import annealing as annealing_mod
 from src.quantum.annealing import QuantumAnnealingOptimizer
@@ -164,17 +164,13 @@ class TestNetworkToQubo(unittest.TestCase):
             np.random.randn(2).astype(np.float32),
         ]
         td_errors = np.array([0.1, -0.2, 0.3])
-        Q = self.opt.network_to_qubo(
-            self.weights, gradients=gradients, td_errors=td_errors
-        )
+        Q = self.opt.network_to_qubo(self.weights, gradients=gradients, td_errors=td_errors)
         self.assertEqual(Q.shape[0], Q.shape[1])
         self.assertTrue(np.all(np.isfinite(Q)))
 
     def test_qubo_with_empty_td_errors_equals_none(self):
         """空 TD 误差数组应等同于未提供 TD 误差。"""
-        Q_empty = self.opt.network_to_qubo(
-            self.weights, td_errors=np.array([])
-        )
+        Q_empty = self.opt.network_to_qubo(self.weights, td_errors=np.array([]))
         Q_none = self.opt.network_to_qubo(self.weights)
         np.testing.assert_array_almost_equal(Q_empty, Q_none)
 
@@ -234,9 +230,7 @@ class TestBitstringToWeights(unittest.TestCase):
             np.random.randn(2).astype(np.float64),
         ]
         bitstring = "0" * self.bitstring_len
-        weights = self.opt.bitstring_to_weights(
-            bitstring, self.shapes, current_weights=current
-        )
+        weights = self.opt.bitstring_to_weights(bitstring, self.shapes, current_weights=current)
         for w, c in zip(weights, current):
             np.testing.assert_array_almost_equal(w, c)
 
@@ -265,9 +259,7 @@ class TestBitstringToWeights(unittest.TestCase):
             np.random.randn(2).astype(np.float64),
         ]
         bitstring = "0" * self.bitstring_len
-        weights = self.opt.bitstring_to_weights(
-            bitstring, self.shapes, current_weights=current
-        )
+        weights = self.opt.bitstring_to_weights(bitstring, self.shapes, current_weights=current)
         for w, c in zip(weights, current):
             np.testing.assert_array_almost_equal(w, c)
 
@@ -476,9 +468,7 @@ class TestWeightExtraction(unittest.TestCase):
         self.opt = QuantumAnnealingOptimizer()
         self.net = nn.Linear(4, 2)
         with torch.no_grad():
-            self.net.weight.copy_(
-                torch.tensor([[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]])
-            )
+            self.net.weight.copy_(torch.tensor([[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]]))
             self.net.bias.copy_(torch.tensor([0.01, 0.02]))
 
     def test_extract_returns_weights_and_shapes(self):
@@ -486,12 +476,8 @@ class TestWeightExtraction(unittest.TestCase):
         weights, shapes = self.opt._extract_weights(self.net)
         self.assertEqual(len(weights), 2)
         self.assertEqual(shapes, [(2, 4), (2,)])
-        np.testing.assert_array_almost_equal(
-            weights[0], self.net.weight.detach().numpy()
-        )
-        np.testing.assert_array_almost_equal(
-            weights[1], self.net.bias.detach().numpy()
-        )
+        np.testing.assert_array_almost_equal(weights[0], self.net.weight.detach().numpy())
+        np.testing.assert_array_almost_equal(weights[1], self.net.bias.detach().numpy())
 
     def test_extract_shapes_match_module(self):
         """提取的形状应与 nn.Module 参数形状一致。"""
@@ -516,12 +502,8 @@ class TestWeightExtraction(unittest.TestCase):
             np.full((2,), 0.1, dtype=np.float32),
         ]
         self.opt._set_weights(self.net, target)
-        np.testing.assert_array_almost_equal(
-            self.net.weight.detach().numpy(), np.full((2, 4), 0.9)
-        )
-        np.testing.assert_array_almost_equal(
-            self.net.bias.detach().numpy(), np.full((2,), 0.1)
-        )
+        np.testing.assert_array_almost_equal(self.net.weight.detach().numpy(), np.full((2, 4), 0.9))
+        np.testing.assert_array_almost_equal(self.net.bias.detach().numpy(), np.full((2,), 0.1))
 
     def test_extract_multi_layer_network(self):
         """多层网络应提取所有参数张量。"""
@@ -551,16 +533,13 @@ class TestOptimizePolicyAndHelpers(unittest.TestCase):
 
     def test_optimize_policy_enabled_runs_and_syncs_target(self):
         """启用量子加速后 optimize_policy 应执行并同步 target_net。"""
+
         class MockAgent:
             """模拟 RL 智能体，用于测试 optimize_policy 接口。"""
 
             def __init__(self):
-                self.policy_net = nn.Sequential(
-                    nn.Linear(4, 8), nn.ReLU(), nn.Linear(8, 2)
-                )
-                self.target_net = nn.Sequential(
-                    nn.Linear(4, 8), nn.ReLU(), nn.Linear(8, 2)
-                )
+                self.policy_net = nn.Sequential(nn.Linear(4, 8), nn.ReLU(), nn.Linear(8, 2))
+                self.target_net = nn.Sequential(nn.Linear(4, 8), nn.ReLU(), nn.Linear(8, 2))
                 self.target_net.load_state_dict(self.policy_net.state_dict())
 
         agent = MockAgent()
@@ -571,24 +550,23 @@ class TestOptimizePolicyAndHelpers(unittest.TestCase):
             )
         self.assertIs(result, agent)
         # target_net 应被同步为 policy_net
-        for p1, p2 in zip(
-            agent.policy_net.parameters(), agent.target_net.parameters()
-        ):
+        for p1, p2 in zip(agent.policy_net.parameters(), agent.target_net.parameters()):
             self.assertTrue(torch.equal(p1, p2))
 
     def test_optimize_policy_head_only_raises_attribute_error(self):
         """head_only=True（默认）因源码缺失 _apply_weights_v2_partial 方法而抛 AttributeError。"""
+
         class MockAgent:
             """带 policy_net 的模拟智能体。"""
 
             def __init__(self):
-                self.policy_net = nn.Sequential(
-                    nn.Linear(4, 4), nn.ReLU(), nn.Linear(4, 2)
-                )
+                self.policy_net = nn.Sequential(nn.Linear(4, 4), nn.ReLU(), nn.Linear(4, 2))
 
         agent = MockAgent()
-        with patch.object(annealing_mod, "QUANTUM_ACCELERATION_ENABLED", True), \
-                self.assertRaises(AttributeError):
+        with (
+            patch.object(annealing_mod, "QUANTUM_ACCELERATION_ENABLED", True),
+            self.assertRaises(AttributeError),
+        ):
             self.opt.optimize_policy(agent, num_iterations=1, head_only=True)
 
     def test_optimize_policy_no_policy_net_returns_agent(self):
@@ -600,13 +578,12 @@ class TestOptimizePolicyAndHelpers(unittest.TestCase):
 
     def test_optimize_policy_callback_invoked(self):
         """提供回调时应在每次迭代后被调用。"""
+
         class MockAgent:
             """带 policy_net 的模拟智能体。"""
 
             def __init__(self):
-                self.policy_net = nn.Sequential(
-                    nn.Linear(4, 4), nn.ReLU(), nn.Linear(4, 2)
-                )
+                self.policy_net = nn.Sequential(nn.Linear(4, 4), nn.ReLU(), nn.Linear(4, 2))
 
         agent = MockAgent()
         calls = []
@@ -615,9 +592,7 @@ class TestOptimizePolicyAndHelpers(unittest.TestCase):
             calls.append((iteration, loss))
 
         with patch.object(annealing_mod, "QUANTUM_ACCELERATION_ENABLED", True):
-            self.opt.optimize_policy(
-                agent, num_iterations=3, callback=cb, head_only=False
-            )
+            self.opt.optimize_policy(agent, num_iterations=3, callback=cb, head_only=False)
         self.assertEqual(len(calls), 3)
         self.assertEqual([c[0] for c in calls], [0, 1, 2])
 
@@ -674,12 +649,8 @@ class TestOptimizePolicyAndHelpers(unittest.TestCase):
         new = [np.ones((1, 3), dtype=np.float32), np.ones(1, dtype=np.float32)]
         self.opt._apply_weights_v2(net, old, new, learning_rate=0.5)
         # w_final = 0 + 0.5 * (1 - 0) = 0.5
-        np.testing.assert_array_almost_equal(
-            net.weight.detach().numpy(), np.full((1, 3), 0.5)
-        )
-        np.testing.assert_array_almost_equal(
-            net.bias.detach().numpy(), np.full(1, 0.5)
-        )
+        np.testing.assert_array_almost_equal(net.weight.detach().numpy(), np.full((1, 3), 0.5))
+        np.testing.assert_array_almost_equal(net.bias.detach().numpy(), np.full(1, 0.5))
 
     def test_apply_weights_v1_linear_interpolation(self):
         """_apply_weights 旧版本应按线性插值更新参数。"""
@@ -692,12 +663,8 @@ class TestOptimizePolicyAndHelpers(unittest.TestCase):
         shapes = [(1, 2), (1,)]
         self.opt._apply_weights(net, old, new, shapes, learning_rate=0.5)
         # old_std≈0, new_std≈0 → 缩放比≈1 → w_final = 0.5*1 + 0.5*3 = 2
-        np.testing.assert_array_almost_equal(
-            net.weight.detach().numpy(), np.full((1, 2), 2.0)
-        )
-        np.testing.assert_array_almost_equal(
-            net.bias.detach().numpy(), np.full(1, 2.0)
-        )
+        np.testing.assert_array_almost_equal(net.weight.detach().numpy(), np.full((1, 2), 2.0))
+        np.testing.assert_array_almost_equal(net.bias.detach().numpy(), np.full(1, 2.0))
 
 
 if __name__ == "__main__":

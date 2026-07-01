@@ -36,19 +36,27 @@ from src.scheduler.env import QuantumSchedulingEnv
 def parse_args():
     parser = argparse.ArgumentParser(description="超参数网格搜索")
     parser.add_argument(
-        "--timesteps", type=int, default=20000,
+        "--timesteps",
+        type=int,
+        default=20000,
         help="每个参数组合的训练步数（默认: 20000）",
     )
     parser.add_argument(
-        "--eval-episodes", type=int, default=10,
+        "--eval-episodes",
+        type=int,
+        default=10,
         help="评估时的 episode 数（默认: 10）",
     )
     parser.add_argument(
-        "--output-dir", type=str, default="./results/",
+        "--output-dir",
+        type=str,
+        default="./results/",
         help="结果输出目录（默认: ./results/）",
     )
     parser.add_argument(
-        "--seed", type=int, default=42,
+        "--seed",
+        type=int,
+        default=42,
         help="随机种子（默认: 42）",
     )
     return parser.parse_args()
@@ -74,6 +82,7 @@ def run_search(
     values = list(param_grid.values())
 
     from itertools import product
+
     for combination_count, params in enumerate(product(*values), start=1):
         param_dict = dict(zip(keys, params, strict=False))
 
@@ -84,6 +93,7 @@ def run_search(
         try:
             np.random.seed(args.seed)
             import torch
+
             torch.manual_seed(args.seed)
 
             env = QuantumSchedulingEnv(
@@ -131,9 +141,11 @@ def run_search(
 
             results.append(result)
 
-            print(f"  ✓ 完成 | Reward: {result['avg_reward']:.2f} | "
-                  f"Success: {result['success_rate']:.2%} | "
-                  f"耗时: {result['elapsed_seconds']:.1f}s")
+            print(
+                f"  ✓ 完成 | Reward: {result['avg_reward']:.2f} | "
+                f"Success: {result['success_rate']:.2%} | "
+                f"耗时: {result['elapsed_seconds']:.1f}s"
+            )
 
         except Exception as e:
             print(f"  ✗ 失败: {e!s}")
@@ -174,7 +186,11 @@ def save_results(results: list[dict], output_dir: str):
 
         print(f"\n[保存] 搜索结果 CSV: {csv_path}")
 
-        valid_results = [r for r in results if not isinstance(r["avg_reward"], float) or not np.isnan(r["avg_reward"])]
+        valid_results = [
+            r
+            for r in results
+            if not isinstance(r["avg_reward"], float) or not np.isnan(r["avg_reward"])
+        ]
         if valid_results:
             best_result = max(valid_results, key=lambda r: r["avg_reward"])
             print(f"\n{'='*60}")

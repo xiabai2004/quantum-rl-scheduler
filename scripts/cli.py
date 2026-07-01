@@ -94,9 +94,7 @@ def train(
 
 
 @cli.command()
-@click.option(
-    "--num-tasks", default=200, show_default=True, help="每个 episode 的模拟任务数"
-)
+@click.option("--num-tasks", default=200, show_default=True, help="每个 episode 的模拟任务数")
 @click.option("--episodes", default=20, show_default=True, help="仿真 episode 数")
 @click.option(
     "--mock-mode", is_flag=True, default=True, help="使用 Mock 模式（纯仿真，不抽样真机）"
@@ -116,8 +114,7 @@ def simulate(
 ) -> None:
     """运行调度仿真对比（7-8 种策略）。"""
     click.echo(
-        f"📊 开始仿真: episodes={episodes}, tasks/episode={num_tasks}, "
-        f"mock_mode={mock_mode}"
+        f"📊 开始仿真: episodes={episodes}, tasks/episode={num_tasks}, " f"mock_mode={mock_mode}"
     )
     try:
         from scripts.run_simulation import run_simulation
@@ -170,9 +167,7 @@ def serve(port: int, host: str) -> None:
     default=False,
     help="多机器调度演示（演示本身会对比单机 vs 多机器，此标志用于显式确认）",
 )
-@click.option(
-    "--real", is_flag=True, default=False, help="真机验证模式（需配置 TIANYAN_API_KEY）"
-)
+@click.option("--real", is_flag=True, default=False, help="真机验证模式（需配置 TIANYAN_API_KEY）")
 @click.option("--episodes", default=20, show_default=True, help="每个场景的演示轮数")
 @click.option(
     "--ppo-model",
@@ -194,9 +189,7 @@ def demo(
     output: str,
 ) -> None:
     """运行调度演示（单机 vs 多机器 / 真机验证）。"""
-    click.echo(
-        f"🎯 演示模式: multi_machine={multi_machine}, real={real}, episodes={episodes}"
-    )
+    click.echo(f"🎯 演示模式: multi_machine={multi_machine}, real={real}, episodes={episodes}")
     try:
         from scripts.demo_multi_machine import main as demo_main
     except ImportError as exc:

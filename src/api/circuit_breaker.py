@@ -89,10 +89,7 @@ class CircuitBreaker:
             if self.state == CircuitState.HALF_OPEN:
                 # 试探性调用失败，重回 OPEN
                 self.state = CircuitState.OPEN
-            elif (
-                self.state == CircuitState.CLOSED
-                and self.failure_count >= self.failure_threshold
-            ):
+            elif self.state == CircuitState.CLOSED and self.failure_count >= self.failure_threshold:
                 self.state = CircuitState.OPEN
             raise
 

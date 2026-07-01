@@ -84,140 +84,200 @@ def parse_args():
     # 训练参数
     training = parser.add_argument_group("训练参数")
     training.add_argument(
-        "--timesteps", type=int, default=100000,
+        "--timesteps",
+        type=int,
+        default=100000,
         help="训练总步数（默认: 100000）",
     )
     training.add_argument(
-        "--resume", action="store_true",
+        "--resume",
+        action="store_true",
         help="从检查点恢复训练",
     )
     training.add_argument(
-        "--checkpoint", type=str, default=None,
+        "--checkpoint",
+        type=str,
+        default=None,
         help="检查点路径（用于恢复训练）",
     )
     training.add_argument(
-        "--patience", type=int, default=0,
+        "--patience",
+        type=int,
+        default=0,
         help="早停耐心值，评估奖励连续 N 次不提升则停止（默认: 0 表示不禁用）",
     )
     training.add_argument(
-        "--min-improvement", type=float, default=0.01,
+        "--min-improvement",
+        type=float,
+        default=0.01,
         help="被视为提升的最小奖励改进比例（默认: 0.01 即 1%%）",
     )
 
     # 评估参数
     evaluation = parser.add_argument_group("评估参数")
     evaluation.add_argument(
-        "--eval-freq", type=int, default=1000,
+        "--eval-freq",
+        type=int,
+        default=1000,
         help="评估频率，每隔多少步评估一次（默认: 1000）",
     )
     evaluation.add_argument(
-        "--eval-episodes", type=int, default=10,
+        "--eval-episodes",
+        type=int,
+        default=10,
         help="每次评估的 episode 数（默认: 10）",
     )
     evaluation.add_argument(
-        "--deterministic", action="store_true", default=True,
+        "--deterministic",
+        action="store_true",
+        default=True,
         help="评估时使用确定性策略",
     )
 
     # 保存参数
     saving = parser.add_argument_group("保存参数")
     saving.add_argument(
-        "--save-path", type=str, default="./models/",
+        "--save-path",
+        type=str,
+        default="./models/",
         help="模型保存路径（默认: ./models/）",
     )
     saving.add_argument(
-        "--save-freq", type=int, default=5000,
+        "--save-freq",
+        type=int,
+        default=5000,
         help="检查点保存频率（默认: 5000）",
     )
     saving.add_argument(
-        "--no-save-best", action="store_true",
+        "--no-save-best",
+        action="store_true",
         help="禁用最佳模型自动保存",
     )
     saving.add_argument(
-        "--log-dir", type=str, default="./logs/",
+        "--log-dir",
+        type=str,
+        default="./logs/",
         help="TensorBoard 日志目录（默认: ./logs/）",
     )
     saving.add_argument(
-        "--experiment-name", type=str, default=None,
+        "--experiment-name",
+        type=str,
+        default=None,
         help="实验名称（默认: 自动生成时间戳）",
     )
 
     # 环境参数
     env = parser.add_argument_group("环境参数")
     env.add_argument(
-        "--max-qubits", type=int, default=287,
+        "--max-qubits",
+        type=int,
+        default=287,
         help="最大量子比特数（默认: 287）",
     )
     env.add_argument(
-        "--max-steps", type=int, default=500,
+        "--max-steps",
+        type=int,
+        default=500,
         help="每个 episode 的最大步数（默认: 500）",
     )
     env.add_argument(
-        "--seed", type=int, default=None,
+        "--seed",
+        type=int,
+        default=None,
         help="随机种子（默认: None）",
     )
     env.add_argument(
-        "--seeds", type=int, nargs="+", default=None,
+        "--seeds",
+        type=int,
+        nargs="+",
+        default=None,
         help="多种子对比实验（会并行或顺序训练多个种子）",
     )
 
     # 智能体参数
     agent = parser.add_argument_group("智能体参数")
     agent.add_argument(
-        "--learning-rate", type=float, default=3e-4,
+        "--learning-rate",
+        type=float,
+        default=3e-4,
         help="学习率（默认: 3e-4）",
     )
     agent.add_argument(
-        "--buffer-size", type=int, default=100000,
+        "--buffer-size",
+        type=int,
+        default=100000,
         help="经验回放缓冲区大小（默认: 100000）",
     )
     agent.add_argument(
-        "--batch-size", type=int, default=64,
+        "--batch-size",
+        type=int,
+        default=64,
         help="批次大小（默认: 64）",
     )
     agent.add_argument(
-        "--gamma", type=float, default=0.99,
+        "--gamma",
+        type=float,
+        default=0.99,
         help="折扣因子（默认: 0.99）",
     )
     agent.add_argument(
-        "--epsilon-start", type=float, default=1.0,
+        "--epsilon-start",
+        type=float,
+        default=1.0,
         help="探索起始 epsilon（默认: 1.0）",
     )
     agent.add_argument(
-        "--epsilon-end", type=float, default=0.01,
+        "--epsilon-end",
+        type=float,
+        default=0.01,
         help="探索终止 epsilon（默认: 0.01）",
     )
     agent.add_argument(
-        "--epsilon-decay", type=float, default=0.995,
+        "--epsilon-decay",
+        type=float,
+        default=0.995,
         help="epsilon 衰减率（默认: 0.995）",
     )
     agent.add_argument(
-        "--target-update-freq", dest="target_update_interval", type=int, default=500,
+        "--target-update-freq",
+        dest="target_update_interval",
+        type=int,
+        default=500,
         help="目标网络更新频率（默认: 500）",
     )
 
     # 配置文件
     config = parser.add_argument_group("配置文件")
     config.add_argument(
-        "--config", type=str, default=None,
+        "--config",
+        type=str,
+        default=None,
         help="YAML 配置文件路径（会覆盖命令行参数）",
     )
     config.add_argument(
-        "--reward-fn", type=str, default=None,
+        "--reward-fn",
+        type=str,
+        default=None,
         help="自定义奖励函数模块路径",
     )
 
     # 其他
     parser.add_argument(
-        "--verbose", type=int, default=1,
+        "--verbose",
+        type=int,
+        default=1,
         help="详细程度 0-2（默认: 1）",
     )
     parser.add_argument(
-        "--device", type=str, default="auto",
+        "--device",
+        type=str,
+        default="auto",
         help="训练设备（cuda/cpu/auto，默认: auto）",
     )
     parser.add_argument(
-        "--progress-bar", action="store_true", default=True,
+        "--progress-bar",
+        action="store_true",
+        default=True,
         help="显示进度条（默认: True）",
     )
 
@@ -300,7 +360,11 @@ class TrainingMetrics:
             return False
 
         # 计算连续多少次评估没有提升
-        recent_best = max(self.eval_rewards[:-patience]) if len(self.eval_rewards) > patience else max(self.eval_rewards)
+        recent_best = (
+            max(self.eval_rewards[:-patience])
+            if len(self.eval_rewards) > patience
+            else max(self.eval_rewards)
+        )
 
         if self.eval_rewards[-1] < recent_best * (1 - min_improvement):
             self.patience_counter += 1
@@ -321,7 +385,9 @@ class TrainingMetrics:
             "best_eval_step": self.best_eval_step,
             "training_time_seconds": self.training_time,
             "avg_train_reward_recent": float(np.mean(self.train_rewards[-n:])) if n > 0 else 0,
-            "avg_eval_reward_recent": float(np.mean(self.eval_rewards[-min(10, n_eval):])) if n_eval > 0 else 0,
+            "avg_eval_reward_recent": (
+                float(np.mean(self.eval_rewards[-min(10, n_eval) :])) if n_eval > 0 else 0
+            ),
             "eval_count": n_eval,
         }
 
@@ -425,6 +491,7 @@ def train_single_seed(
     # 设置随机种子
     np.random.seed(seed)
     import torch
+
     torch.manual_seed(seed)
 
     # 创建环境
@@ -478,8 +545,9 @@ def train_single_seed(
     class ProgressCallback(BaseCallback):
         """进度条和评估回调"""
 
-        def __init__(self, eval_freq, eval_episodes, save_freq, seed_dir, metrics,
-                     total_timesteps, verbose=0):
+        def __init__(
+            self, eval_freq, eval_episodes, save_freq, seed_dir, metrics, total_timesteps, verbose=0
+        ):
             super().__init__(verbose)
             self.eval_freq = eval_freq
             self.eval_episodes = eval_episodes
@@ -496,7 +564,8 @@ def train_single_seed(
                 self.last_eval_step = self.num_timesteps
 
                 eval_result = evaluate_agent(
-                    agent, env,
+                    agent,
+                    env,
                     num_episodes=self.eval_episodes,
                     deterministic=args.deterministic,
                 )
@@ -520,8 +589,7 @@ def train_single_seed(
                     f"Success: {eval_result['success_rate']*100:.1f}% | "
                     f"Wait: {eval_result['avg_wait_time']:.1f}s | "
                     f"Qubits: {eval_result['qubit_utilization']*100:.1f}% | "
-                    f"Speed: {steps_per_sec:.0f} steps/s"
-                    + (" [BEST]" if is_best else "")
+                    f"Speed: {steps_per_sec:.0f} steps/s" + (" [BEST]" if is_best else "")
                 )
 
                 # 保存最佳模型
@@ -531,7 +599,9 @@ def train_single_seed(
                     logger.info(f"  -> 最佳模型已保存: {best_path}.zip")
 
                 # 检查早停
-                if args.patience > 0 and self.metrics.should_stop(args.patience, args.min_improvement):
+                if args.patience > 0 and self.metrics.should_stop(
+                    args.patience, args.min_improvement
+                ):
                     logger.info(f"早停触发！连续 {args.patience} 次评估未提升")
                     return False  # 停止训练
 
@@ -571,7 +641,8 @@ def train_single_seed(
     # 最终评估
     logger.info("执行最终评估...")
     final_eval = evaluate_agent(
-        agent, env,
+        agent,
+        env,
         num_episodes=max(20, args.eval_episodes),
         deterministic=True,
     )
@@ -593,7 +664,9 @@ def train_single_seed(
     logger.info(f"训练完成 | 种子: {seed}")
     logger.info(f"  总步数:     {summary['total_steps']}")
     logger.info(f"  总 episodes: {summary['total_episodes']}")
-    logger.info(f"  最佳评估奖励: {summary['best_eval_reward']:.2f} (step {summary['best_eval_step']})")
+    logger.info(
+        f"  最佳评估奖励: {summary['best_eval_reward']:.2f} (step {summary['best_eval_step']})"
+    )
     logger.info(f"  最终评估奖励: {final_eval['mean_reward']:.2f}±{final_eval['std_reward']:.2f}")
     logger.info(f"  训练时间:     {summary['training_time_seconds']:.1f}s")
     logger.info(f"{'=' * 60}")

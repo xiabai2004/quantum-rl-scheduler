@@ -8,6 +8,7 @@
     - 解析器对任意合法 QASM 不崩溃
     - normalize_vector 幂等且保序
 """
+
 import os
 import sys
 import unittest
@@ -116,9 +117,7 @@ class TestUtilsProperty(unittest.TestCase):
 
     @given(
         v=st.lists(
-            st.floats(
-                min_value=-1000.0, max_value=1000.0, allow_nan=False, allow_infinity=False
-            ),
+            st.floats(min_value=-1000.0, max_value=1000.0, allow_nan=False, allow_infinity=False),
             min_size=2,
             max_size=20,
         )

@@ -11,6 +11,7 @@
     python scripts/verify_annealing_real.py
     python scripts/verify_annealing_real.py --real   # 绑定真机客户端触发降级日志
 """
+
 import logging
 import os
 import sys
@@ -40,6 +41,7 @@ class TinyPolicyNet:
 
     def __init__(self):
         from torch import nn
+
         self.policy_net = nn.Sequential(
             nn.Linear(4, 8),
             nn.ReLU(),
@@ -64,11 +66,13 @@ def main(real: bool = False):
     simulation_mode = True
     if real:
         from dotenv import load_dotenv
+
         load_dotenv()
         api_key = os.getenv("TIANYAN_API_KEY", "")
         if api_key:
             try:
                 from src.api.tianyan_cqlib import CqlibTianyanClient
+
                 cqlib_client = CqlibTianyanClient(
                     login_key=api_key,
                     machine_name="tianyan_s",
@@ -86,26 +90,33 @@ def main(real: bool = False):
         # 不带真机时用一个空对象模拟"cqlib 无退火接口"场景
         class _FakeCqlib:
             """模拟 cqlib 客户端：有方法但没有 submit_annealing_task。"""
+
             machine_name = "tianyan_s"
+
             def submit_quantum_task(self, **kwargs):
                 return "fake_task_id"
+
         cqlib_client = _FakeCqlib()
         simulation_mode = False  # 强制走真机分支，触发"无退火接口"降级日志
-        print("[验证] 注入 FakeCqlib（无 submit_annealing_task），"
-              "simulation_mode=False（将触发降级日志）")
+        print(
+            "[验证] 注入 FakeCqlib（无 submit_annealing_task），"
+            "simulation_mode=False（将触发降级日志）"
+        )
 
     # 构造微型网络 + 退火器
     agent = TinyPolicyNet()
     optimizer = QuantumAnnealingOptimizer(
-        num_qubits=16,           # n_bits_per_weight=4，58 参数 × 4 = 232 比特
+        num_qubits=16,  # n_bits_per_weight=4，58 参数 × 4 = 232 比特
         annealing_time=10.0,
         shots=100,
         simulation_mode=simulation_mode,
         cqlib_client=cqlib_client,
     )
 
-    print(f"\n[验证] simulation_mode={simulation_mode}, "
-          f"cqlib_client={type(cqlib_client).__name__}")
+    print(
+        f"\n[验证] simulation_mode={simulation_mode}, "
+        f"cqlib_client={type(cqlib_client).__name__}"
+    )
     print("[验证] 调用 optimize_policy()（3 次迭代），观察退火日志...\n")
 
     # 直接调用 optimize_policy，3 次迭代足够验证日志
@@ -122,9 +133,11 @@ def main(real: bool = False):
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="任务四退火验证")
     parser.add_argument(
-        "--real", action="store_true",
+        "--real",
+        action="store_true",
         help="绑定真机 cqlib 客户端以触发降级为仿真日志",
     )
     args = parser.parse_args()

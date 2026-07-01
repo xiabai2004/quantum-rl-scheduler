@@ -17,7 +17,7 @@ from datetime import datetime
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scripts.run_simulation import (
     ClassicalOnlyStrategy,
@@ -38,12 +38,12 @@ from src.scheduler.env import (
 )
 from src.scheduler.parser import (
     LegacyTaskParser,
+)
+from src.scheduler.parser import Task as ParserTask
+from src.scheduler.parser import (
     TaskBuilder,
     TaskFeatures,
     TaskParser,
-)
-from src.scheduler.parser import (
-    Task as ParserTask,
 )
 
 
@@ -145,9 +145,13 @@ class TestQuantumSchedulingEnv(unittest.TestCase):
         _obs, info = self.env.reset(seed=42)
         _, _, _, _, info = self.env.step(0)
 
-        expected_keys = ["total_scheduled", "quantum_success",
-                         "classical_success", "hybrid_success",
-                         "mismatch_count"]
+        expected_keys = [
+            "total_scheduled",
+            "quantum_success",
+            "classical_success",
+            "hybrid_success",
+            "mismatch_count",
+        ]
         for key in expected_keys:
             self.assertIn(key, info)
 
@@ -256,8 +260,12 @@ class TestMultiMachineScheduling(unittest.TestCase):
         env = QuantumSchedulingEnv(
             max_steps=20,
             machine_configs=[
-                {"name": "small", "total_qubits": 10,
-                 "supported_gates": ("H", "CZ", "M"), "is_real": False},
+                {
+                    "name": "small",
+                    "total_qubits": 10,
+                    "supported_gates": ("H", "CZ", "M"),
+                    "is_real": False,
+                },
             ],
         )
         env.reset(seed=42)
@@ -370,7 +378,7 @@ class TestLegacyTaskParser(unittest.TestCase):
 
     def test_parse_json(self):
         """测试JSON格式解析"""
-        json_str = '''{
+        json_str = """{
             "task_id": "task_001",
             "user_id": "user_123",
             "task_type": "quantum",
@@ -379,7 +387,7 @@ class TestLegacyTaskParser(unittest.TestCase):
             "algorithm": "VQE",
             "estimated_time": 120.0,
             "priority": 4
-        }'''
+        }"""
 
         features = self.parser.parse(json_str, format="json")
 
@@ -480,8 +488,7 @@ class TestTaskParser(unittest.TestCase):
 
     def test_parse_classical(self):
         """测试经典任务类型"""
-        d = dict(self.sample_dict, type="classical",
-                 qubits_required=0, algorithm=None)
+        d = dict(self.sample_dict, type="classical", qubits_required=0, algorithm=None)
         task = self.parser.parse(d)
         self.assertEqual(task.task_type, "classical")
         self.assertIsNone(task.algorithm)
@@ -505,9 +512,7 @@ class TestTaskParser(unittest.TestCase):
     def test_parse_invalid_priority_raises(self):
         """测试无效 priority 抛异常"""
         with self.assertRaises(ValueError):
-            self.parser.parse(
-                dict(self.sample_dict, priority="super_urgent")
-            )
+            self.parser.parse(dict(self.sample_dict, priority="super_urgent"))
 
     def test_parse_qubits_exceed_limit_raises(self):
         """测试量子比特超限抛异常"""
@@ -595,13 +600,7 @@ class TestTaskParser(unittest.TestCase):
 
     def test_builder_status(self):
         """测试 Builder 设置状态"""
-        task = (
-            TaskBuilder()
-            .set_id("s_001")
-            .set_type("classical")
-            .set_status("running")
-            .build()
-        )
+        task = TaskBuilder().set_id("s_001").set_type("classical").set_status("running").build()
         self.assertEqual(task.status, "running")
 
 
@@ -661,9 +660,7 @@ class TestQuantumAnnealing(unittest.TestCase):
         gradients = [dW1, db1]
         td_errors = np.random.randn(32).astype(np.float32)
 
-        qubo = self.optimizer.network_to_qubo(
-            weights, gradients=gradients, td_errors=td_errors
-        )
+        qubo = self.optimizer.network_to_qubo(weights, gradients=gradients, td_errors=td_errors)
 
         self.assertIsInstance(qubo, np.ndarray)
         self.assertEqual(qubo.shape[0], qubo.shape[1])
@@ -742,9 +739,7 @@ class TestQuantumAnnealing(unittest.TestCase):
         random_energies = []
         for _ in range(100):
             rand_bits = np.random.randint(0, 2, n).astype(np.float64)
-            random_energies.append(
-                QuantumAnnealingOptimizer._compute_qubo_energy(rand_bits, Q)
-            )
+            random_energies.append(QuantumAnnealingOptimizer._compute_qubo_energy(rand_bits, Q))
 
         avg_random = np.mean(random_energies)
         self.assertLess(best_energy, avg_random)
@@ -754,16 +749,19 @@ class TestSchedulingStrategies(unittest.TestCase):
     """测试调度策略"""
 
     def setUp(self):
-        self.obs = np.array([
-            0.5,   # qubit_availability
-            0.3,   # queue_length
-            0.2,   # avg_wait_time
-            0.95,  # fidelity
-            0.4,   # classical_load
-            0.5,   # quantum_queue_ratio
-            0.5,   # time_of_day
-            0.6,   # urgency_level
-        ], dtype=np.float32)
+        self.obs = np.array(
+            [
+                0.5,  # qubit_availability
+                0.3,  # queue_length
+                0.2,  # avg_wait_time
+                0.95,  # fidelity
+                0.4,  # classical_load
+                0.5,  # quantum_queue_ratio
+                0.5,  # time_of_day
+                0.6,  # urgency_level
+            ],
+            dtype=np.float32,
+        )
 
     def test_greedy_strategy(self):
         """测试贪心策略"""
@@ -856,8 +854,7 @@ class TestIntegration(unittest.TestCase):
             seed=42,
         )
 
-        model = agent.train(total_timesteps=200, eval_freq=100,
-                            n_eval_episodes=2)
+        model = agent.train(total_timesteps=200, eval_freq=100, n_eval_episodes=2)
         self.assertIsNotNone(model)
 
     def test_evaluate(self):

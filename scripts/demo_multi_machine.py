@@ -19,6 +19,7 @@
     # 真机验证模式（5% 量子任务上真机）
     python scripts/demo_multi_machine.py --real --real-prob 0.05 --episodes 5
 """
+
 import argparse
 import os
 import sys
@@ -41,10 +42,12 @@ from src.scheduler.env import (
 # 策略函数
 # ---------------------------------------------------------------------------
 
+
 def ppo_policy_factory(model_path: str, env):
     """加载 PPO 模型构造策略函数；失败返回 None。"""
     try:
         from src.scheduler.agent import PPOAgent
+
         agent = PPOAgent(env)
         agent.load(model_path)
         print(f"[Policy] PPO 模型已加载: {model_path}")
@@ -74,6 +77,7 @@ def heuristic_policy(obs: np.ndarray, info: dict) -> int:
 # ---------------------------------------------------------------------------
 # 单 episode 运行
 # ---------------------------------------------------------------------------
+
 
 def run_episode(
     env: QuantumSchedulingEnv,
@@ -173,12 +177,13 @@ def run_multi_episode(
         "machine_real_submits_total": agg_real,
         "policy": "PPO" if use_ppo else "heuristic",
     }
-    print(f"\n  结果: mean_reward={summary['mean_reward']:.2f}"
-          f" ± {summary['std_reward']:.2f}")
-    print(f"  量子成功={summary['mean_quantum_success']:.1f}"
-          f" 混合={summary['mean_hybrid_success']:.1f}"
-          f" 经典={summary['mean_classical_success']:.1f}"
-          f" 不兼容={summary['mean_mismatch']:.1f}")
+    print(f"\n  结果: mean_reward={summary['mean_reward']:.2f}" f" ± {summary['std_reward']:.2f}")
+    print(
+        f"  量子成功={summary['mean_quantum_success']:.1f}"
+        f" 混合={summary['mean_hybrid_success']:.1f}"
+        f" 经典={summary['mean_classical_success']:.1f}"
+        f" 不兼容={summary['mean_mismatch']:.1f}"
+    )
     if agg_machine:
         print(f"  机器调度分布: {agg_machine}")
     if agg_real and sum(agg_real.values()) > 0:
@@ -189,6 +194,7 @@ def run_multi_episode(
 # ---------------------------------------------------------------------------
 # 报告生成
 # ---------------------------------------------------------------------------
+
 
 def generate_report(
     single_summary: dict,
@@ -216,21 +222,41 @@ def generate_report(
         else:
             sign = "+" if delta > 0 else ""
             chg = f"{sign}{fmt.format(delta)}"
-        lines.append(
-            f"| {name} | {fmt.format(s)} | {fmt.format(m)} | {chg} |"
-        )
+        lines.append(f"| {name} | {fmt.format(s)} | {fmt.format(m)} | {chg} |")
 
     _row("平均奖励", single_summary["mean_reward"], multi_summary["mean_reward"])
-    _row("奖励标准差", single_summary["std_reward"], multi_summary["std_reward"],
-         fmt="{:.2f}", better_higher=False)
-    _row("平均量子成功数", single_summary["mean_quantum_success"],
-         multi_summary["mean_quantum_success"], fmt="{:.1f}")
-    _row("平均混合成功数", single_summary["mean_hybrid_success"],
-         multi_summary["mean_hybrid_success"], fmt="{:.1f}")
-    _row("平均经典成功数", single_summary["mean_classical_success"],
-         multi_summary["mean_classical_success"], fmt="{:.1f}")
-    _row("平均不兼容数", single_summary["mean_mismatch"],
-         multi_summary["mean_mismatch"], fmt="{:.1f}", better_higher=False)
+    _row(
+        "奖励标准差",
+        single_summary["std_reward"],
+        multi_summary["std_reward"],
+        fmt="{:.2f}",
+        better_higher=False,
+    )
+    _row(
+        "平均量子成功数",
+        single_summary["mean_quantum_success"],
+        multi_summary["mean_quantum_success"],
+        fmt="{:.1f}",
+    )
+    _row(
+        "平均混合成功数",
+        single_summary["mean_hybrid_success"],
+        multi_summary["mean_hybrid_success"],
+        fmt="{:.1f}",
+    )
+    _row(
+        "平均经典成功数",
+        single_summary["mean_classical_success"],
+        multi_summary["mean_classical_success"],
+        fmt="{:.1f}",
+    )
+    _row(
+        "平均不兼容数",
+        single_summary["mean_mismatch"],
+        multi_summary["mean_mismatch"],
+        fmt="{:.1f}",
+        better_higher=False,
+    )
 
     # 多机器负载均衡
     lines.append("")
@@ -264,15 +290,21 @@ def generate_report(
     lines.append("")
     reward_delta = multi_summary["mean_reward"] - single_summary["mean_reward"]
     if reward_delta > 0:
-        lines.append(f"- 多机器调度平均奖励 **提升 {reward_delta:.2f}**，"
-                     f"证实多机器纳管能提升整体调度吞吐")
+        lines.append(
+            f"- 多机器调度平均奖励 **提升 {reward_delta:.2f}**，"
+            f"证实多机器纳管能提升整体调度吞吐"
+        )
     else:
-        lines.append(f"- 多机器调度平均奖励变化 {reward_delta:+.2f}，"
-                     f"主要价值在负载分摊与容错而非单 episode 奖励")
+        lines.append(
+            f"- 多机器调度平均奖励变化 {reward_delta:+.2f}，"
+            f"主要价值在负载分摊与容错而非单 episode 奖励"
+        )
     lines.append(f"- 调度策略: {multi_summary['policy']}")
     lines.append(f"- 纳管机器: {multi_summary['num_machines']} 台")
     if real_mode and sum(multi_summary["machine_real_submits_total"].values()) > 0:
-        lines.append(f"- 真机验证: 已提交 {sum(multi_summary['machine_real_submits_total'].values())} 个任务到天衍云真机")
+        lines.append(
+            f"- 真机验证: 已提交 {sum(multi_summary['machine_real_submits_total'].values())} 个任务到天衍云真机"
+        )
     lines.append("")
     lines.append("---")
     lines.append("*报告自动生成 | 数据来源: src/scheduler/env.py 多机器调度扩展*")
@@ -284,23 +316,31 @@ def generate_report(
 # 主入口
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(description="多机器调度演示")
-    parser.add_argument("--episodes", type=int, default=20,
-                        help="每个场景运行的 episode 数（默认 20）")
-    parser.add_argument("--max-steps", type=int, default=300,
-                        help="每个 episode 最大步数（默认 300）")
-    parser.add_argument("--ppo-model", type=str,
-                        default="models/ppo_seed_42_v4/best_model.zip",
-                        help="PPO 模型路径（不存在则用启发式策略）")
-    parser.add_argument("--real", action="store_true",
-                        help="启用真机验证模式（需配置 TIANYAN_API_KEY）")
-    parser.add_argument("--real-prob", type=float, default=0.05,
-                        help="真机提交抽样概率（默认 0.05）")
+    parser.add_argument(
+        "--episodes", type=int, default=20, help="每个场景运行的 episode 数（默认 20）"
+    )
+    parser.add_argument(
+        "--max-steps", type=int, default=300, help="每个 episode 最大步数（默认 300）"
+    )
+    parser.add_argument(
+        "--ppo-model",
+        type=str,
+        default="models/ppo_seed_42_v4/best_model.zip",
+        help="PPO 模型路径（不存在则用启发式策略）",
+    )
+    parser.add_argument(
+        "--real", action="store_true", help="启用真机验证模式（需配置 TIANYAN_API_KEY）"
+    )
+    parser.add_argument(
+        "--real-prob", type=float, default=0.05, help="真机提交抽样概率（默认 0.05）"
+    )
     parser.add_argument("--seed", type=int, default=42, help="基础随机种子")
-    parser.add_argument("--output", type=str,
-                        default="results/multi_machine_demo_report.md",
-                        help="报告输出路径")
+    parser.add_argument(
+        "--output", type=str, default="results/multi_machine_demo_report.md", help="报告输出路径"
+    )
     args = parser.parse_args()
 
     print("=" * 60)
@@ -314,6 +354,7 @@ def main():
     real_clients = {}
     if args.real:
         from dotenv import load_dotenv
+
         load_dotenv()
         api_key = os.getenv("TIANYAN_API_KEY", "")
         if not api_key:
@@ -321,6 +362,7 @@ def main():
             args.real = False
         else:
             from src.api.tianyan_cqlib import create_multi_machine_clients
+
             machine_names = [c["name"] for c in DEFAULT_MACHINE_CONFIGS]
             try:
                 real_clients = create_multi_machine_clients(api_key, machine_names)
@@ -334,28 +376,33 @@ def main():
     if not os.path.exists(ppo_path):
         print(f"[提示] PPO 模型不存在: {ppo_path}，将使用启发式策略")
         ppo_path = None
-    policy_factory = (
-        (lambda env: ppo_policy_factory(ppo_path, env)) if ppo_path else None
-    )
+    policy_factory = (lambda env: ppo_policy_factory(ppo_path, env)) if ppo_path else None
 
     # ---- 场景 1：单机基线 ----
-    single_configs = [{
-        "max_steps": args.max_steps,
-        "machine_configs": None,  # None = 单机兼容模式
-        "real_submit_probability": 0.0,
-    }]
+    single_configs = [
+        {
+            "max_steps": args.max_steps,
+            "machine_configs": None,  # None = 单机兼容模式
+            "real_submit_probability": 0.0,
+        }
+    ]
     single_summary = run_multi_episode(
         single_configs, policy_factory, args.episodes, args.seed, "单机基线 (tianyan_s)"
     )
 
     # ---- 场景 2：多机器调度 ----
-    multi_configs = [{
-        "max_steps": args.max_steps,
-        "machine_configs": DEFAULT_MACHINE_CONFIGS,
-        "real_submit_probability": args.real_prob if args.real else 0.0,
-    }]
+    multi_configs = [
+        {
+            "max_steps": args.max_steps,
+            "machine_configs": DEFAULT_MACHINE_CONFIGS,
+            "real_submit_probability": args.real_prob if args.real else 0.0,
+        }
+    ]
     multi_summary = run_multi_episode(
-        multi_configs, policy_factory, args.episodes, args.seed + 100,
+        multi_configs,
+        policy_factory,
+        args.episodes,
+        args.seed + 100,
         f"多机器调度 ({len(DEFAULT_MACHINE_CONFIGS)} 台)",
         real_clients=real_clients if args.real else None,
     )

@@ -36,8 +36,16 @@ VALID_TASK_TYPES: set = {"quantum", "classical", "hybrid"}
 VALID_STATUSES: set = {"pending", "queued", "running", "completed", "failed"}
 
 KNOWN_ALGORITHMS: set = {
-    "VQE", "QAOA", "Grover", "Shor", "HHL",
-    "QSVM", "QFT", "QPE", "AmplitudeEncoding", "Variational",
+    "VQE",
+    "QAOA",
+    "Grover",
+    "Shor",
+    "HHL",
+    "QSVM",
+    "QFT",
+    "QPE",
+    "AmplitudeEncoding",
+    "Variational",
 }
 
 # 天衍-287 真机约束
@@ -50,6 +58,7 @@ MAX_SHOTS: int = 100000
 # Task dataclass — 规范化任务表示
 # ============================================================
 
+
 @dataclass
 class Task:
     """规范化量子/经典任务数据结构"""
@@ -58,7 +67,7 @@ class Task:
     task_type: Literal["quantum", "classical", "hybrid"]
     qubits_required: int
     estimated_time: float
-    priority: int                               # 1-4, low→urgent
+    priority: int  # 1-4, low→urgent
     submitted_at: datetime = field(default_factory=datetime.now)
     algorithm: str | None = None
     circuit_depth: int | None = None
@@ -70,6 +79,7 @@ class Task:
 # ============================================================
 # TaskBuilder — Builder 模式
 # ============================================================
+
 
 class TaskBuilder:
     """
@@ -98,7 +108,7 @@ class TaskBuilder:
             "task_type": "quantum",
             "qubits_required": 0,
             "estimated_time": 0.0,
-            "priority": 2,       # default medium
+            "priority": 2,  # default medium
             "submitted_at": datetime.now(),
             "algorithm": None,
             "circuit_depth": None,
@@ -117,8 +127,7 @@ class TaskBuilder:
         task_type = task_type.lower().strip()
         if task_type not in VALID_TASK_TYPES:
             raise ValueError(
-                f"Invalid task_type '{task_type}'. "
-                f"Must be one of {sorted(VALID_TASK_TYPES)}"
+                f"Invalid task_type '{task_type}'. " f"Must be one of {sorted(VALID_TASK_TYPES)}"
             )
         self._data["task_type"] = task_type
         return self
@@ -148,8 +157,7 @@ class TaskBuilder:
             priority = priority.lower().strip()
             if priority not in PRIORITY_MAP:
                 raise ValueError(
-                    f"Invalid priority '{priority}'. "
-                    f"Must be one of {list(PRIORITY_MAP.keys())}"
+                    f"Invalid priority '{priority}'. " f"Must be one of {list(PRIORITY_MAP.keys())}"
                 )
             self._data["priority"] = PRIORITY_MAP[priority]
         else:
@@ -171,8 +179,7 @@ class TaskBuilder:
         status = status.lower().strip()
         if status not in VALID_STATUSES:
             raise ValueError(
-                f"Invalid status '{status}'. "
-                f"Must be one of {sorted(VALID_STATUSES)}"
+                f"Invalid status '{status}'. " f"Must be one of {sorted(VALID_STATUSES)}"
             )
         self._data["status"] = status
         return self
@@ -240,6 +247,7 @@ class TaskBuilder:
 # TaskParser — 核心解析器
 # ============================================================
 
+
 class TaskParser:
     """
     量子任务解析器
@@ -275,9 +283,7 @@ class TaskParser:
             ValueError:  缺少必填字段或字段类型不合法。
         """
         if not isinstance(task_dict, dict):
-            raise TypeError(
-                f"task_dict must be a dict, got {type(task_dict).__name__}"
-            )
+            raise TypeError(f"task_dict must be a dict, got {type(task_dict).__name__}")
 
         # 必填字段检查
         required_keys = {"task_id"}
@@ -290,9 +296,7 @@ class TaskParser:
         # 解析后自动校验
         errors = self._collect_errors(task)
         if errors:
-            raise ValueError(
-                "Task validation failed:\n  - " + "\n  - ".join(errors)
-            )
+            raise ValueError("Task validation failed:\n  - " + "\n  - ".join(errors))
 
         return task
 
@@ -311,12 +315,11 @@ class TaskParser:
             True if valid, else False（错误信息会打印到 stderr）。
         """
         if not isinstance(task, Task):
-            raise TypeError(
-                f"validate() expects a Task instance, got {type(task).__name__}"
-            )
+            raise TypeError(f"validate() expects a Task instance, got {type(task).__name__}")
         errors = self._collect_errors(task)
         if errors:
             import sys
+
             for e in errors:
                 print(f"[validation error] {e}", file=sys.stderr)
             return False
@@ -361,9 +364,7 @@ class TaskParser:
             if not isinstance(task.shots, int) or task.shots < 0:
                 errors.append("shots must be a non-negative integer.")
             elif task.shots > self.max_shots:
-                errors.append(
-                    f"shots ({task.shots}) exceeds system limit ({self.max_shots})."
-                )
+                errors.append(f"shots ({task.shots}) exceeds system limit ({self.max_shots}).")
 
         # estimated_time
         if not isinstance(task.estimated_time, (int, float)) or task.estimated_time < 0:
@@ -376,8 +377,7 @@ class TaskParser:
         # status
         if task.status not in VALID_STATUSES:
             errors.append(
-                f"status '{task.status}' is invalid. "
-                f"Expected one of {sorted(VALID_STATUSES)}."
+                f"status '{task.status}' is invalid. " f"Expected one of {sorted(VALID_STATUSES)}."
             )
 
         # deadline
@@ -387,9 +387,7 @@ class TaskParser:
         # quantum 类型约束
         if task.task_type == "quantum":
             if task.qubits_required <= 0:
-                errors.append(
-                    "Quantum task must have qubits_required > 0."
-                )
+                errors.append("Quantum task must have qubits_required > 0.")
             if task.algorithm and not isinstance(task.algorithm, str):
                 errors.append("algorithm must be a string when provided.")
 
@@ -428,11 +426,11 @@ class TaskParser:
 
         # 内存：状态向量 2^n × 复数精度 ~ 16B，取 log 尺度
         if qubits <= 30:
-            state_vector_bytes = (2 ** qubits) * 16
-            memory_mb = state_vector_bytes / (1024 ** 2)
+            state_vector_bytes = (2**qubits) * 16
+            memory_mb = state_vector_bytes / (1024**2)
         else:
             # 大比特数无法存储全状态向量，按稀疏/张量网络估算
-            memory_mb = (depth * qubits * 0.001)  # 简化启发式
+            memory_mb = depth * qubits * 0.001  # 简化启发式
 
         # 经典计算占比
         if task.task_type == "classical":
@@ -488,9 +486,7 @@ class TaskParser:
                 deadline_urgency = 1.0 + 3.0 / (remaining / 3600.0 + 1.0)
 
         time_factor = 1.0 / max(task.estimated_time, 1.0)
-        scheduling_weight = (
-            task.priority * deadline_urgency * time_factor * 1000
-        )
+        scheduling_weight = task.priority * deadline_urgency * time_factor * 1000
 
         internal: dict[str, Any] = {
             "task_id": task.task_id,
@@ -516,9 +512,11 @@ class TaskParser:
 # 旧版兼容 — TaskFeatures & LegacyTaskParser
 # ============================================================
 
+
 @dataclass
 class TaskFeatures:
     """任务特征向量（向后兼容）"""
+
     task_id: str
     user_id: str
     task_type: str  # "quantum", "classical", "hybrid"
@@ -848,7 +846,7 @@ if __name__ == "__main__":
     print("旧版 LegacyTaskParser 兼容演示")
     print("=" * 60)
     legacy_parser = LegacyTaskParser()
-    json_str = '''{
+    json_str = """{
         "task_id": "task_001",
         "user_id": "user_123",
         "task_type": "quantum",
@@ -857,7 +855,7 @@ if __name__ == "__main__":
         "algorithm": "VQE",
         "estimated_time": 120.0,
         "priority": 4
-    }'''
+    }"""
     features = legacy_parser.parse(json_str, format="json")
     if features:
         print(f"task_id: {features.task_id}")

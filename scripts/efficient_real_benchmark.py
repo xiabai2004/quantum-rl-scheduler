@@ -37,12 +37,9 @@ API_KEY = os.getenv("TIANYAN_API_KEY", "")
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--machines", default="tianyan_s,tianyan_sw,tianyan_tn",
-                   help="逗号分隔的机器名")
-    p.add_argument("--samples", type=int, default=3,
-                   help="每种策略采样次数")
-    p.add_argument("--shots", type=int, default=256,
-                   help="每次测量 shots（免费机器用小值）")
+    p.add_argument("--machines", default="tianyan_s,tianyan_sw,tianyan_tn", help="逗号分隔的机器名")
+    p.add_argument("--samples", type=int, default=3, help="每种策略采样次数")
+    p.add_argument("--shots", type=int, default=256, help="每次测量 shots（免费机器用小值）")
     p.add_argument("--skip-annealing", action="store_true")
     p.add_argument("--skip-fault-test", action="store_true")
     return p.parse_args()
@@ -200,7 +197,9 @@ def analyze(results, annealing, fault):
             if "all_times" not in summary["per_strategy"][strategy]:
                 summary["per_strategy"][strategy]["all_times"] = []
             summary["per_strategy"][strategy]["all_times"].extend(s["times"])
-        m["avg_time"] = round(np.mean([s["avg_time"] for s in m["strategies"].values() if s["avg_time"]]), 2)
+        m["avg_time"] = round(
+            np.mean([s["avg_time"] for s in m["strategies"].values() if s["avg_time"]]), 2
+        )
         summary["per_machine"][machine_name] = m
 
     # 各策略跨机器平均耗时
@@ -216,7 +215,8 @@ def analyze(results, annealing, fault):
     # 各策略排名
     rankings = sorted(
         [(s, d["success"] / max(d["total"], 1)) for s, d in summary["per_strategy"].items()],
-        key=lambda x: x[1], reverse=True,
+        key=lambda x: x[1],
+        reverse=True,
     )
     summary["strategy_ranking"] = rankings
 

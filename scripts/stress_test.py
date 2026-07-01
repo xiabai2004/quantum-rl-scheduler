@@ -46,6 +46,7 @@ RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")
 # 场景定义
 # ============================================================================
 
+
 @dataclass
 class Scenario:
     name: str
@@ -53,7 +54,7 @@ class Scenario:
     max_steps: int
     description: str
     # 可选：自定义任务生成参数
-    quantum_ratio: float = 0.7   # 量子任务占比
+    quantum_ratio: float = 0.7  # 量子任务占比
     classical_ratio: float = 0.2  # 经典任务占比
     qubit_availability: float = 1.0  # 量子资源可用比率 (0-1)
     # 潮汐模式
@@ -96,9 +97,11 @@ SCENARIOS = [
 # 策略实现
 # ============================================================================
 
+
 def run_ppo_strategy(env, model_path: str):
     """PPO 策略：加载训练好的模型进行决策"""
     from stable_baselines3 import PPO as SB3PPO
+
     model = SB3PPO.load(model_path)
 
     obs = env.reset()[0]
@@ -179,6 +182,7 @@ def run_strategy(env, name: str, ppo_model_path: str | None = None):
 # 场景执行
 # ============================================================================
 
+
 def create_env_for_scenario(scenario: Scenario) -> QuantumSchedulingEnv:
     """根据场景创建定制环境"""
     env = QuantumSchedulingEnv(
@@ -239,8 +243,12 @@ def run_stress_test():
     ppo_path = None
     for candidate in [
         os.path.join(PROJECT_ROOT, "models", "ppo_seed_42_v4", "best_model.zip"),
-        os.path.join(PROJECT_ROOT, "logs", "ablation_with_anneal_seed42", "best_model", "best_model.zip"),
-        os.path.join(PROJECT_ROOT, "logs", "ablation_no_anneal_seed42", "best_model", "best_model.zip"),
+        os.path.join(
+            PROJECT_ROOT, "logs", "ablation_with_anneal_seed42", "best_model", "best_model.zip"
+        ),
+        os.path.join(
+            PROJECT_ROOT, "logs", "ablation_no_anneal_seed42", "best_model", "best_model.zip"
+        ),
         os.path.join(PPO_MODEL_DIR, "best_model.zip"),
     ]:
         if os.path.exists(candidate):
@@ -258,8 +266,10 @@ def run_stress_test():
                 break
 
     if not ppo_path:
-        print("[WARN] 未找到 PPO 模型，PPO 策略将跳过。"
-              "请先运行 ablation_annealing.py 或 test_annealing_ppo.py 生成模型。")
+        print(
+            "[WARN] 未找到 PPO 模型，PPO 策略将跳过。"
+            "请先运行 ablation_annealing.py 或 test_annealing_ppo.py 生成模型。"
+        )
         effective_strategies = [s for s in STRATEGIES if s != "PPO"]
     else:
         print(f"[模型] PPO: {ppo_path}")
@@ -290,7 +300,9 @@ def run_stress_test():
                 n_completed = max(details["completions"]) if details["completions"] else 0
                 avg_wait = np.mean(details["wait_times"]) if details["wait_times"] else 0
 
-                print(f"reward={reward:.1f}  completed={n_completed}  wait={avg_wait:.1f}  ({elapsed:.1f}s)")
+                print(
+                    f"reward={reward:.1f}  completed={n_completed}  wait={avg_wait:.1f}  ({elapsed:.1f}s)"
+                )
 
                 scenario_results[strategy_name] = {
                     "reward": float(reward),
@@ -350,8 +362,14 @@ def run_stress_test():
 
         for bar, val in zip(bars, sorted_rewards):
             y = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2, y + max(y*0.02, 20),
-                    f"{val:.0f}", ha="center", fontsize=9, fontweight="bold")
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                y + max(y * 0.02, 20),
+                f"{val:.0f}",
+                ha="center",
+                fontsize=9,
+                fontweight="bold",
+            )
 
         ax.set_title(f"{scenario.label}\n({scenario.description})", fontsize=10)
         ax.set_ylabel("Total Reward")
@@ -389,9 +407,11 @@ def run_stress_test():
             print("    PPO:  未参与（无模型）")
 
         for name, data in sorted_items:
-            print(f"      {name:<8} {data['reward']:>8.0f} | "
-                  f"completed={data.get('completed_tasks','?'):>4} | "
-                  f"wait={data.get('avg_wait_time',0):>6.1f}")
+            print(
+                f"      {name:<8} {data['reward']:>8.0f} | "
+                f"completed={data.get('completed_tasks','?'):>4} | "
+                f"wait={data.get('avg_wait_time',0):>6.1f}"
+            )
 
     print(f"\n{'='*60}")
     print("产出文件:")

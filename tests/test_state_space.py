@@ -15,7 +15,7 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.scheduler.agent import PPOAgent
 from src.scheduler.env import (
@@ -44,11 +44,7 @@ class TestExtendedStateSpace(unittest.TestCase):
     def test_obs_dim_is_14(self):
         """测试观测空间维度为14"""
         self.assertEqual(OBS_DIM, 14, "OBS_DIM 应为 14")
-        self.assertEqual(
-            self.env.observation_space.shape[0],
-            14,
-            "环境观测空间维度应为 14"
-        )
+        self.assertEqual(self.env.observation_space.shape[0], 14, "环境观测空间维度应为 14")
 
     def test_observation_shape(self):
         """测试观测向量形状"""
@@ -65,14 +61,8 @@ class TestExtendedStateSpace(unittest.TestCase):
             action = self.env.action_space.sample()
             obs, _, terminated, truncated, _ = self.env.step(action)
 
-            self.assertTrue(
-                np.all(obs >= 0.0),
-                f"观测值应 >= 0，但发现 {obs.min()}"
-            )
-            self.assertTrue(
-                np.all(obs <= 1.0),
-                f"观测值应 <= 1，但发现 {obs.max()}"
-            )
+            self.assertTrue(np.all(obs >= 0.0), f"观测值应 >= 0，但发现 {obs.min()}")
+            self.assertTrue(np.all(obs <= 1.0), f"观测值应 <= 1，但发现 {obs.max()}")
 
             if terminated or truncated:
                 obs, _ = self.env.reset()
@@ -95,7 +85,7 @@ class TestExtendedStateSpace(unittest.TestCase):
         self.assertLessEqual(
             two_gate_fid,
             single_gate_fid + 0.1,  # 允许小范围波动
-            "两比特门保真度通常应低于单比特门保真度"
+            "两比特门保真度通常应低于单比特门保真度",
         )
 
     def test_topology_features(self):
@@ -134,10 +124,7 @@ class TestExtendedStateSpace(unittest.TestCase):
         self.assertLess(machine.two_gate_fidelity, 1.0)
 
         # 两比特门保真度应低于单比特门
-        self.assertLess(
-            machine.two_gate_fidelity,
-            machine.single_gate_fidelity
-        )
+        self.assertLess(machine.two_gate_fidelity, machine.single_gate_fidelity)
 
     def test_quantum_machine_topology_features(self):
         """测试 QuantumMachine 的拓扑特征更新"""
@@ -145,30 +132,21 @@ class TestExtendedStateSpace(unittest.TestCase):
         small_machine = QuantumMachine(name="small", total_qubits=72)
         small_machine.update_topology_features()
         self.assertAlmostEqual(
-            small_machine.coupling_density,
-            0.7,
-            places=2,
-            msg="小芯片耦合密度应约为 0.7"
+            small_machine.coupling_density, 0.7, places=2, msg="小芯片耦合密度应约为 0.7"
         )
 
         # 中芯片（100-200 qubits）
         medium_machine = QuantumMachine(name="medium", total_qubits=176)
         medium_machine.update_topology_features()
         self.assertAlmostEqual(
-            medium_machine.coupling_density,
-            0.5,
-            places=2,
-            msg="中芯片耦合密度应约为 0.5"
+            medium_machine.coupling_density, 0.5, places=2, msg="中芯片耦合密度应约为 0.5"
         )
 
         # 大芯片（>200 qubits）
         large_machine = QuantumMachine(name="large", total_qubits=287)
         large_machine.update_topology_features()
         self.assertAlmostEqual(
-            large_machine.coupling_density,
-            0.3,
-            places=2,
-            msg="大芯片耦合密度应约为 0.3"
+            large_machine.coupling_density, 0.3, places=2, msg="大芯片耦合密度应约为 0.3"
         )
 
         # 平均连通度
@@ -189,11 +167,7 @@ class TestMultiMachineExtendedState(unittest.TestCase):
 
     def test_multi_machine_obs_dim(self):
         """测试多机器模式下观测维度"""
-        self.assertEqual(
-            self.env.observation_space.shape[0],
-            14,
-            "多机器模式观测维度应为 14"
-        )
+        self.assertEqual(self.env.observation_space.shape[0], 14, "多机器模式观测维度应为 14")
 
     def test_multi_machine_observation(self):
         """测试多机器模式下观测向量"""
@@ -249,9 +223,7 @@ class TestLSTMPolicy(unittest.TestCase):
         # 验证策略类型为 RecurrentActorCriticPolicy（RecurrentPPO 的策略）
         policy_class = model.policy.__class__.__name__
         self.assertIn(
-            "Recurrent",
-            policy_class,
-            f"策略类名应包含 'Recurrent'，实际为 {policy_class}"
+            "Recurrent", policy_class, f"策略类名应包含 'Recurrent'，实际为 {policy_class}"
         )
 
     def test_lstm_training_convergence(self):
@@ -280,7 +252,7 @@ class TestLSTMPolicy(unittest.TestCase):
         self.assertGreater(
             mean_reward,
             2000,
-            f"LSTM PPO 训练 50000 步后 mean reward 应 > 2000，实际为 {mean_reward:.2f}"
+            f"LSTM PPO 训练 50000 步后 mean reward 应 > 2000，实际为 {mean_reward:.2f}",
         )
 
 
@@ -312,10 +284,7 @@ class TestBackwardCompatibility(unittest.TestCase):
             loaded_successfully = False
             print(f"加载失败: {e}")
 
-        self.assertTrue(
-            loaded_successfully,
-            "旧模型应能在新环境上加载（即使性能下降）"
-        )
+        self.assertTrue(loaded_successfully, "旧模型应能在新环境上加载（即使性能下降）")
 
         # 清理测试文件
         if os.path.exists(f"{save_path}.zip"):

@@ -123,6 +123,7 @@ class MockTianyanClient:
         """按失败率随机抛出异常"""
         if random.random() < self.mock_failure_rate:
             from src.api.tianyan_client import TianyanAPIError
+
             raise TianyanAPIError(
                 status_code=500,
                 message=f"Mock 模拟失败: {operation}",
@@ -155,7 +156,7 @@ class MockTianyanClient:
         MAX_QUBITS_FOR_FULL_ENUM = 20  # noqa: N806
         if num_qubits <= MAX_QUBITS_FOR_FULL_ENUM:
             #  qubit 数较少时使用全排列
-            possible_states = [bin(i)[2:].zfill(num_qubits) for i in range(2 ** num_qubits)]
+            possible_states = [bin(i)[2:].zfill(num_qubits) for i in range(2**num_qubits)]
 
             # 随机分配 shots
             remaining_shots = shots
@@ -510,6 +511,7 @@ class MockTianyanClient:
 # 工厂函数：根据配置创建客户端（真实或 Mock）
 # ======================================================================
 
+
 def create_tianyan_client(mock_mode: bool | None = None) -> Any:
     """工厂函数：根据配置创建天衍云客户端
 
@@ -540,6 +542,7 @@ def create_tianyan_client(mock_mode: bool | None = None) -> Any:
             # 从配置文件读取（使用基于 __file__ 的绝对路径）
             try:
                 import yaml
+
                 config_path = os.path.join(
                     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                     "config",
@@ -563,6 +566,7 @@ def create_tianyan_client(mock_mode: bool | None = None) -> Any:
         )
     else:
         from src.api.tianyan_client import TianyanClient
+
         logger.info("使用真实 API 模式")
         return TianyanClient()
 

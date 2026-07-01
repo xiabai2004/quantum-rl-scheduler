@@ -44,6 +44,7 @@ SEED_PRESETS = [42, 123, 456, 789, 1024]
 # 工具函数
 # =========================================================================
 
+
 def _read_final_eval_reward(log_dir: str) -> float:
     """从SB3 eval日志读取最后一次eval的mean reward"""
     eval_path = Path(log_dir) / "evaluations.npz"
@@ -86,6 +87,7 @@ def _run_baseline_scheduler(env, seed, timesteps, strategy="random") -> float:
 # D1: 算法组件消融
 # =========================================================================
 
+
 def run_dim1_algorithm_ablation(
     timesteps: int = 30000,
     seeds: list[int] = None,
@@ -100,20 +102,28 @@ def run_dim1_algorithm_ablation(
 
     configs = [
         {
-            "name": "PPO+Annealing", "ablation": "none",
-            "agent": "ppo", "use_annealing": True,
-            "anneal_interval": EVAL_FREQ, "anneal_qubits": 16,
+            "name": "PPO+Annealing",
+            "ablation": "none",
+            "agent": "ppo",
+            "use_annealing": True,
+            "anneal_interval": EVAL_FREQ,
+            "anneal_qubits": 16,
         },
         {
-            "name": "PPO-Only", "ablation": "annealing",
-            "agent": "ppo", "use_annealing": False,
+            "name": "PPO-Only",
+            "ablation": "annealing",
+            "agent": "ppo",
+            "use_annealing": False,
         },
         {
-            "name": "Pure-Annealing", "ablation": "ppo",
-            "agent": "annealing_only", "use_annealing": True,
+            "name": "Pure-Annealing",
+            "ablation": "ppo",
+            "agent": "annealing_only",
+            "use_annealing": True,
         },
         {
-            "name": "Classical-Random", "ablation": "quantum",
+            "name": "Classical-Random",
+            "ablation": "quantum",
             "agent": "random",
         },
     ]
@@ -130,31 +140,37 @@ def run_dim1_algorithm_ablation(
 
             if cfg["agent"] == "ppo" and cfg.get("use_annealing"):
                 agent = PPOAgent(
-                    env, use_annealing=True,
+                    env,
+                    use_annealing=True,
                     anneal_interval=cfg["anneal_interval"],
                     anneal_qubits=cfg["anneal_qubits"],
-                    verbose=0, seed=seed,
+                    verbose=0,
+                    seed=seed,
                     n_steps=1024 if dry_run else 2048,
                     batch_size=32 if dry_run else 64,
-                    log_dir=str(PROJECT_ROOT / "logs" /
-                                f"ablation_d1_{cfg['ablation']}_s{seed}"),
+                    log_dir=str(PROJECT_ROOT / "logs" / f"ablation_d1_{cfg['ablation']}_s{seed}"),
                 )
                 agent.train(timesteps, eval_freq=EVAL_FREQ, n_eval_episodes=N_EVAL_EPISODES)
                 r = _read_final_eval_reward(agent.log_dir)
             elif cfg["agent"] == "ppo":
                 agent = PPOAgent(
-                    env, use_annealing=False,
-                    verbose=0, seed=seed,
+                    env,
+                    use_annealing=False,
+                    verbose=0,
+                    seed=seed,
                     n_steps=1024 if dry_run else 2048,
                     batch_size=32 if dry_run else 64,
-                    log_dir=str(PROJECT_ROOT / "logs" /
-                                f"ablation_d1_{cfg['ablation']}_s{seed}"),
+                    log_dir=str(PROJECT_ROOT / "logs" / f"ablation_d1_{cfg['ablation']}_s{seed}"),
                 )
                 agent.train(timesteps, eval_freq=EVAL_FREQ, n_eval_episodes=N_EVAL_EPISODES)
                 r = _read_final_eval_reward(agent.log_dir)
             else:
-                r = _run_baseline_scheduler(env, seed, timesteps,
-                                              strategy="greedy" if "annealing" in cfg["agent"] else "random")
+                r = _run_baseline_scheduler(
+                    env,
+                    seed,
+                    timesteps,
+                    strategy="greedy" if "annealing" in cfg["agent"] else "random",
+                )
 
             per_seed_r.append(r)
             print(f"    seed={seed} reward={r:.1f}")
@@ -168,6 +184,7 @@ def run_dim1_algorithm_ablation(
 # =========================================================================
 # D2: 状态空间消融
 # =========================================================================
+
 
 def run_dim2_state_space_ablation(
     timesteps: int = 30000,
@@ -190,14 +207,30 @@ def run_dim2_state_space_ablation(
     os.environ["QUANTUM_ACCELERATION_ENABLED"] = "1"
 
     dim_configs = [
-        {"name": "10D-Full", "dim": 10, "ablation": "none",
-         "description": "完整10维：qubit_avail+queue_len+fidelity+classical_load+classical_queue+time_of_day+task_priority+task_qubits+task_type+wait_steps"},
-        {"name": "8D-Reduced", "dim": 8, "ablation": "task_detail",
-         "description": "移除task_type+wait_steps"},
-        {"name": "5D-Minimal", "dim": 5, "ablation": "full_detail",
-         "description": "仅保留qubit_avail+queue_len+fidelity+classical_load+time_of_day"},
-        {"name": "3D-Baseline", "dim": 3, "ablation": "extreme",
-         "description": "仅qubit_avail+queue_len+classical_load"},
+        {
+            "name": "10D-Full",
+            "dim": 10,
+            "ablation": "none",
+            "description": "完整10维：qubit_avail+queue_len+fidelity+classical_load+classical_queue+time_of_day+task_priority+task_qubits+task_type+wait_steps",
+        },
+        {
+            "name": "8D-Reduced",
+            "dim": 8,
+            "ablation": "task_detail",
+            "description": "移除task_type+wait_steps",
+        },
+        {
+            "name": "5D-Minimal",
+            "dim": 5,
+            "ablation": "full_detail",
+            "description": "仅保留qubit_avail+queue_len+fidelity+classical_load+time_of_day",
+        },
+        {
+            "name": "3D-Baseline",
+            "dim": 3,
+            "ablation": "extreme",
+            "description": "仅qubit_avail+queue_len+classical_load",
+        },
     ]
 
     results = {"dimension": "D2_StateSpace", "configs": [], "summary": {}}
@@ -209,11 +242,13 @@ def run_dim2_state_space_ablation(
         for seed in seeds:
             env = QuantumSchedulingEnv(max_steps=MAX_STEPS, seed=seed)
             agent = PPOAgent(
-                env, use_annealing=False, verbose=0, seed=seed,
+                env,
+                use_annealing=False,
+                verbose=0,
+                seed=seed,
                 n_steps=1024 if dry_run else 2048,
                 batch_size=32 if dry_run else 64,
-                log_dir=str(PROJECT_ROOT / "logs" /
-                            f"ablation_d2_{cfg['name']}_s{seed}"),
+                log_dir=str(PROJECT_ROOT / "logs" / f"ablation_d2_{cfg['name']}_s{seed}"),
             )
             # 状态空间消融：通过修改环境观测维度模拟
             original_obs = env._get_observation
@@ -225,10 +260,8 @@ def run_dim2_state_space_ablation(
                     if dim_size == 10:
                         return raw
                     indices = list(range(dim_size))
-                    return np.concatenate([
-                        raw[indices],
-                        np.zeros(10 - dim_size, dtype=np.float32)
-                    ])
+                    return np.concatenate([raw[indices], np.zeros(10 - dim_size, dtype=np.float32)])
+
                 return _limited
 
             env._get_observation = _make_limited_obs(dim)
@@ -247,6 +280,7 @@ def run_dim2_state_space_ablation(
 # =========================================================================
 # D3: 奖励函数消融
 # =========================================================================
+
 
 def run_dim3_reward_ablation(
     timesteps: int = 30000,
@@ -268,14 +302,26 @@ def run_dim3_reward_ablation(
         timesteps = min(timesteps, 5000)
 
     reward_configs = [
-        {"name": "Default", "mode": "default",
-         "description": "标准线性组合：量子+10/经典+5/混合+6"},
-        {"name": "Speedup-Weighted", "mode": "speedup",
-         "description": "按量子加速比加权，加速比越大奖励越高"},
-        {"name": "Fairness-Aware", "mode": "fairness",
-         "description": "加入公平性惩罚（队列方差+等待方差）"},
-        {"name": "Energy-Aware", "mode": "energy",
-         "description": "加入能耗惩罚：量子上真机0.5+经典0.1"},
+        {
+            "name": "Default",
+            "mode": "default",
+            "description": "标准线性组合：量子+10/经典+5/混合+6",
+        },
+        {
+            "name": "Speedup-Weighted",
+            "mode": "speedup",
+            "description": "按量子加速比加权，加速比越大奖励越高",
+        },
+        {
+            "name": "Fairness-Aware",
+            "mode": "fairness",
+            "description": "加入公平性惩罚（队列方差+等待方差）",
+        },
+        {
+            "name": "Energy-Aware",
+            "mode": "energy",
+            "description": "加入能耗惩罚：量子上真机0.5+经典0.1",
+        },
     ]
 
     results = {"dimension": "D3_Reward", "configs": [], "summary": {}}
@@ -295,19 +341,24 @@ def run_dim3_reward_ablation(
                     obs, _, terminated, truncated, info = _original_step(action)
                     # 重新计算本步奖励
                     new_reward = _compute_alternative_reward(env, action, mode)
-                    env._episode_reward = env._episode_reward - info.get("last_reward", 0) + new_reward
+                    env._episode_reward = (
+                        env._episode_reward - info.get("last_reward", 0) + new_reward
+                    )
                     info["last_reward"] = new_reward
                     return obs, new_reward, terminated, truncated, info
+
                 return _wrapped_step
 
             env.step = _make_reward_wrapper(cfg["mode"])
 
             agent = PPOAgent(
-                env, use_annealing=False, verbose=0, seed=seed,
+                env,
+                use_annealing=False,
+                verbose=0,
+                seed=seed,
                 n_steps=1024 if dry_run else 2048,
                 batch_size=32 if dry_run else 64,
-                log_dir=str(PROJECT_ROOT / "logs" /
-                            f"ablation_d3_{cfg['mode']}_s{seed}"),
+                log_dir=str(PROJECT_ROOT / "logs" / f"ablation_d3_{cfg['mode']}_s{seed}"),
             )
             agent.train(timesteps, eval_freq=EVAL_FREQ, n_eval_episodes=N_EVAL_EPISODES)
             r = _read_final_eval_reward(agent.log_dir)
@@ -333,7 +384,7 @@ def _compute_alternative_reward(env, action: int, mode: str) -> float:
     fidelity = obs[2] if len(obs) > 2 else 0.9
     queue_len = obs[1] if len(obs) > 1 else 0
 
-    if action == 0:   # CLASSICAL
+    if action == 0:  # CLASSICAL
         if mode == "speedup":
             reward = 3.0  # 固定基准
         elif mode == "fairness":
@@ -375,6 +426,7 @@ def _compute_alternative_reward(env, action: int, mode: str) -> float:
 # D4: 机器规模消融
 # =========================================================================
 
+
 def run_dim4_machine_scale_ablation(
     timesteps: int = 30000,
     seeds: list[int] = None,
@@ -401,9 +453,12 @@ def run_dim4_machine_scale_ablation(
             "n_machines": 1,
             "description": "单机287q (tianyan_s)，基线",
             "machine_configs": [
-                {"name": "tianyan_s", "total_qubits": 287,
-                 "supported_gates": ("H", "CZ", "M"),
-                 "is_real": False},
+                {
+                    "name": "tianyan_s",
+                    "total_qubits": 287,
+                    "supported_gates": ("H", "CZ", "M"),
+                    "is_real": False,
+                },
             ],
         },
         {
@@ -411,10 +466,18 @@ def run_dim4_machine_scale_ablation(
             "n_machines": 2,
             "description": "双机287+72q (tianyan_s + tianyan_sw)",
             "machine_configs": [
-                {"name": "tianyan_s", "total_qubits": 287,
-                 "supported_gates": ("H", "CZ", "M"), "is_real": False},
-                {"name": "tianyan_sw", "total_qubits": 72,
-                 "supported_gates": ("H", "CZ", "M"), "is_real": False},
+                {
+                    "name": "tianyan_s",
+                    "total_qubits": 287,
+                    "supported_gates": ("H", "CZ", "M"),
+                    "is_real": False,
+                },
+                {
+                    "name": "tianyan_sw",
+                    "total_qubits": 72,
+                    "supported_gates": ("H", "CZ", "M"),
+                    "is_real": False,
+                },
             ],
         },
         {
@@ -439,11 +502,15 @@ def run_dim4_machine_scale_ablation(
                     machine_configs=cfg["machine_configs"],
                 )
                 agent = PPOAgent(
-                    env, use_annealing=False, verbose=0, seed=seed,
+                    env,
+                    use_annealing=False,
+                    verbose=0,
+                    seed=seed,
                     n_steps=1024 if dry_run else 2048,
                     batch_size=32 if dry_run else 64,
-                    log_dir=str(PROJECT_ROOT / "logs" /
-                                f"ablation_d4_n{cfg['n_machines']}_s{seed}"),
+                    log_dir=str(
+                        PROJECT_ROOT / "logs" / f"ablation_d4_n{cfg['n_machines']}_s{seed}"
+                    ),
                 )
                 agent.train(timesteps, eval_freq=EVAL_FREQ, n_eval_episodes=N_EVAL_EPISODES)
                 r = _read_final_eval_reward(agent.log_dir)
@@ -463,6 +530,7 @@ def run_dim4_machine_scale_ablation(
 # =========================================================================
 # D5: 退火策略消融
 # =========================================================================
+
 
 def run_dim5_annealing_strategy_ablation(
     timesteps: int = 30000,
@@ -487,21 +555,32 @@ def run_dim5_annealing_strategy_ablation(
     os.environ["QUANTUM_ACCELERATION_ENABLED"] = "1"
 
     anneal_configs = [
-        {"name": "No-Annealing", "mode": "off",
-         "use_annealing": False,
-         "description": "纯PPO，不使用任何退火"},
-        {"name": "Sim-Annealing", "mode": "sim",
-         "use_annealing": True, "simulation_mode": True,
-         "description": "PPO + neal模拟退火"},
+        {
+            "name": "No-Annealing",
+            "mode": "off",
+            "use_annealing": False,
+            "description": "纯PPO，不使用任何退火",
+        },
+        {
+            "name": "Sim-Annealing",
+            "mode": "sim",
+            "use_annealing": True,
+            "simulation_mode": True,
+            "description": "PPO + neal模拟退火",
+        },
     ]
 
     # Real machine only if env variable is configured
     if os.environ.get("QUANTUM_REAL_ANNEAL_API_KEY"):
-        anneal_configs.append({
-            "name": "Real-Annealing", "mode": "real",
-            "use_annealing": True, "simulation_mode": False,
-            "description": "PPO + 真机退火(cqlib D-Wave)",
-        })
+        anneal_configs.append(
+            {
+                "name": "Real-Annealing",
+                "mode": "real",
+                "use_annealing": True,
+                "simulation_mode": False,
+                "description": "PPO + 真机退火(cqlib D-Wave)",
+            }
+        )
     else:
         print("  [INFO] 真机退火API Key未配置，跳过Real-Annealing配置")
 
@@ -519,11 +598,11 @@ def run_dim5_annealing_strategy_ablation(
                 use_annealing=cfg["use_annealing"],
                 anneal_interval=EVAL_FREQ,
                 anneal_qubits=16,
-                verbose=0, seed=seed,
+                verbose=0,
+                seed=seed,
                 n_steps=1024 if dry_run else 2048,
                 batch_size=32 if dry_run else 64,
-                log_dir=str(PROJECT_ROOT / "logs" /
-                            f"ablation_d5_{cfg['mode']}_s{seed}"),
+                log_dir=str(PROJECT_ROOT / "logs" / f"ablation_d5_{cfg['mode']}_s{seed}"),
             )
             agent.train(timesteps, eval_freq=EVAL_FREQ, n_eval_episodes=N_EVAL_EPISODES)
             r = _read_final_eval_reward(agent.log_dir)
@@ -540,26 +619,32 @@ def run_dim5_annealing_strategy_ablation(
 # 辅助函数
 # =========================================================================
 
+
 def _append_config_result(
-    results: dict, cfg: dict,
-    per_seed_r: list, seeds: list,
-    timesteps: int, dry_run: bool,
+    results: dict,
+    cfg: dict,
+    per_seed_r: list,
+    seeds: list,
+    timesteps: int,
+    dry_run: bool,
 ) -> None:
     """将单配置结果追加到维度结果中。"""
-    results["configs"].append({
-        "name": cfg["name"],
-        "ablation": cfg.get("ablation", ""),
-        "description": cfg.get("description", ""),
-        "num_seeds": len(seeds),
-        "mean_reward": float(np.mean(per_seed_r)),
-        "std_reward": float(np.std(per_seed_r)),
-        "max_reward": float(np.max(per_seed_r)),
-        "min_reward": float(np.min(per_seed_r)),
-        "median_reward": float(np.median(per_seed_r)),
-        "per_seed_rewards": [float(r) for r in per_seed_r],
-        "timesteps": timesteps,
-        "dry_run": dry_run,
-    })
+    results["configs"].append(
+        {
+            "name": cfg["name"],
+            "ablation": cfg.get("ablation", ""),
+            "description": cfg.get("description", ""),
+            "num_seeds": len(seeds),
+            "mean_reward": float(np.mean(per_seed_r)),
+            "std_reward": float(np.std(per_seed_r)),
+            "max_reward": float(np.max(per_seed_r)),
+            "min_reward": float(np.min(per_seed_r)),
+            "median_reward": float(np.median(per_seed_r)),
+            "per_seed_rewards": [float(r) for r in per_seed_r],
+            "timesteps": timesteps,
+            "dry_run": dry_run,
+        }
+    )
 
 
 def _compute_contributions(results: dict) -> None:
@@ -570,9 +655,7 @@ def _compute_contributions(results: dict) -> None:
 
     ref = configs[0]["mean_reward"]  # 第一个配置作为参考基线
     for c in configs:
-        c["relative_to_baseline_pct"] = round(
-            c["mean_reward"] / max(abs(ref), 1e-8) * 100, 1
-        )
+        c["relative_to_baseline_pct"] = round(c["mean_reward"] / max(abs(ref), 1e-8) * 100, 1)
 
     # 计算边际贡献（相邻配置之间）
     results["summary"]["marginal_contributions"] = {}
@@ -596,6 +679,7 @@ def _compute_contributions(results: dict) -> None:
 # 主入口
 # =========================================================================
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="多维消融实验框架 — 系统化分析每个组件的独立贡献",
@@ -607,19 +691,25 @@ def main():
   python scripts/ablation_study.py --dim D4 --timesteps 50000  # 大规模机器消融
         """,
     )
-    parser.add_argument("--all", action="store_true",
-                        help="运行所有5个消融维度")
-    parser.add_argument("--dim", nargs="+", default=[],
-                        choices=["D1", "D2", "D3", "D4", "D5"],
-                        help="指定要运行的消融维度（可多选）")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="快速干跑模式（5000步, 1个seed）")
-    parser.add_argument("--timesteps", type=int, default=30000,
-                        help="每个配置的训练步数（默认30000）")
-    parser.add_argument("--seeds", type=int, default=3,
-                        help="每个配置的随机种子数（默认3）")
-    parser.add_argument("--output", type=str, default=None,
-                        help="输出JSON路径（默认results/ablation_study_TIMESTAMP.json）")
+    parser.add_argument("--all", action="store_true", help="运行所有5个消融维度")
+    parser.add_argument(
+        "--dim",
+        nargs="+",
+        default=[],
+        choices=["D1", "D2", "D3", "D4", "D5"],
+        help="指定要运行的消融维度（可多选）",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="快速干跑模式（5000步, 1个seed）")
+    parser.add_argument(
+        "--timesteps", type=int, default=30000, help="每个配置的训练步数（默认30000）"
+    )
+    parser.add_argument("--seeds", type=int, default=3, help="每个配置的随机种子数（默认3）")
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="输出JSON路径（默认results/ablation_study_TIMESTAMP.json）",
+    )
 
     args = parser.parse_args()
 
@@ -628,7 +718,7 @@ def main():
 
     dims_to_run = args.dim if not args.all else ["D1", "D2", "D3", "D4", "D5"]
 
-    seeds = SEED_PRESETS[:min(args.seeds, 5)]
+    seeds = SEED_PRESETS[: min(args.seeds, 5)]
     dry = args.dry_run
     ts = args.timesteps if not dry else min(args.timesteps, 5000)
 
@@ -668,11 +758,14 @@ def main():
                 print(f"  {'Config':<20s} {'Mean':>8s} {'Std':>8s} {'Rel%':>6s}")
                 for c in configs:
                     rel = c.get("relative_to_baseline_pct", 0)
-                    print(f"  {c['name']:<20s} {c['mean_reward']:>8.1f} "
-                          f"{c['std_reward']:>8.1f} {rel:>5.0f}%")
+                    print(
+                        f"  {c['name']:<20s} {c['mean_reward']:>8.1f} "
+                        f"{c['std_reward']:>8.1f} {rel:>5.0f}%"
+                    )
         except Exception as e:
             print(f"  [FAIL] {dim_name}: {e}")
             import traceback
+
             traceback.print_exc()
 
     # 汇总保存
@@ -687,9 +780,7 @@ def main():
         "dimensions": all_dim_results,
     }
 
-    output_path = args.output or str(
-        RESULTS_DIR / f"ablation_study_{timestamp}.json"
-    )
+    output_path = args.output or str(RESULTS_DIR / f"ablation_study_{timestamp}.json")
     os.makedirs(RESULTS_DIR, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False, default=str)
@@ -702,6 +793,7 @@ def main():
     # 生成关联报告
     try:
         from scripts.generate_ablation_report import generate_ablation_report
+
         md_path = output_path.replace(".json", ".md")
         generate_ablation_report(output_path, md_path)
     except ImportError:

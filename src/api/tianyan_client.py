@@ -111,6 +111,7 @@ class TianyanClient:
         if self.mock_mode:
             # Mock 模式：创建 Mock 客户端并委托所有 API 调用
             from src.api.mock_client import MockTianyanClient
+
             self._mock_client = MockTianyanClient(
                 mock_delay=float(os.getenv("TIANYAN_MOCK_DELAY", "1.0")),
                 mock_failure_rate=float(os.getenv("TIANYAN_MOCK_FAILURE_RATE", "0.0")),
@@ -136,6 +137,7 @@ class TianyanClient:
         if self.api_key:
             try:
                 from src.api.tianyan_cqlib import CqlibTianyanClient
+
                 self._cqlib = CqlibTianyanClient(
                     login_key=self.api_key,
                     machine_name=machine_name,
@@ -147,10 +149,12 @@ class TianyanClient:
 
         # 创建会话并设置 Bearer Token 认证头（REST 路径，deprecated）
         self.session = requests.Session()
-        self.session.headers.update({
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}",
-        })
+        self.session.headers.update(
+            {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            }
+        )
 
     @staticmethod
     def _detect_mock_mode(explicit_mock_mode: bool | None) -> bool:
@@ -289,7 +293,7 @@ class TianyanClient:
 
             # 指数退避等待
             if attempt < self.MAX_RETRIES - 1:
-                wait_time = self.RETRY_INITIAL_WAIT * (self.RETRY_BACKOFF_FACTOR ** attempt)
+                wait_time = self.RETRY_INITIAL_WAIT * (self.RETRY_BACKOFF_FACTOR**attempt)
                 logger.info(f"等待 {wait_time:.1f}s 后重试...")
                 time.sleep(wait_time)
 
@@ -383,7 +387,9 @@ class TianyanClient:
             if not qcis_str:
                 raise ValueError("真实模式需提供 qcis 或 circuit_qasm")
             task_id = self._cqlib.submit_quantum_task(
-                qcis=qcis_str, shots=shots, task_name=task_name,
+                qcis=qcis_str,
+                shots=shots,
+                task_name=task_name,
             )
             if task_id is None:
                 raise TianyanAPIError(500, "cqlib did not return a task_id")
@@ -572,8 +578,10 @@ class TianyanClient:
             return self._cqlib.get_queue_status()
 
         result = self._request("GET", "/queue/status")  # deprecated
-        logger.info(f"队列状态: {result.get('total_pending', 0)} 待执行, "
-                     f"{result.get('total_running', 0)} 执行中")
+        logger.info(
+            f"队列状态: {result.get('total_pending', 0)} 待执行, "
+            f"{result.get('total_running', 0)} 执行中"
+        )
         return result
 
     # ------------------------------------------------------------------

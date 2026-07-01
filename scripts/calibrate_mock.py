@@ -33,16 +33,26 @@ from src.api.tianyan_cqlib import CqlibTianyanClient
 
 # ── 测试电路模板 ──
 TEST_CIRCUITS = {
-    "H_1q":     (1, ["H Q0", "M Q0"]),
-    "H2_1q":    (1, ["H Q0", "H Q0", "M Q0"]),
-    "RX_1q":    (1, ["RX Q0 0.5", "M Q0"]),
-    "Bell_2q":  (2, ["H Q0", "CZ Q0 Q1", "H Q1", "M Q0", "M Q1"]),
-    "GHZ_3q":   (3, ["H Q0", "CZ Q0 Q1", "H Q1", "CZ Q1 Q2", "H Q2", "M Q0", "M Q1", "M Q2"]),
-    "deep_2q":  (2, [
-        "H Q0", "RX Q1 0.3", "CZ Q0 Q1", "H Q1",
-        "RX Q0 0.7", "CZ Q0 Q1", "H Q1",
-        "RX Q0 0.2", "M Q0", "M Q1"
-    ]),
+    "H_1q": (1, ["H Q0", "M Q0"]),
+    "H2_1q": (1, ["H Q0", "H Q0", "M Q0"]),
+    "RX_1q": (1, ["RX Q0 0.5", "M Q0"]),
+    "Bell_2q": (2, ["H Q0", "CZ Q0 Q1", "H Q1", "M Q0", "M Q1"]),
+    "GHZ_3q": (3, ["H Q0", "CZ Q0 Q1", "H Q1", "CZ Q1 Q2", "H Q2", "M Q0", "M Q1", "M Q2"]),
+    "deep_2q": (
+        2,
+        [
+            "H Q0",
+            "RX Q1 0.3",
+            "CZ Q0 Q1",
+            "H Q1",
+            "RX Q0 0.7",
+            "CZ Q0 Q1",
+            "H Q1",
+            "RX Q0 0.2",
+            "M Q0",
+            "M Q1",
+        ],
+    ),
     "shallow_1q": (1, ["M Q0"]),
 }
 
@@ -160,10 +170,7 @@ def run_calibration(args):
             by_circuit[name] = []
         by_circuit[name].append(r["total_time_s"])
 
-    summary["by_circuit"] = {
-        name: round(np.mean(ts), 2)
-        for name, ts in by_circuit.items()
-    }
+    summary["by_circuit"] = {name: round(np.mean(ts), 2) for name, ts in by_circuit.items()}
 
     results["summary"] = summary
 

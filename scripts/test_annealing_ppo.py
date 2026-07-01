@@ -3,6 +3,7 @@
 
 验证量子退火优化器能够正确接入 PPO 训练循环。
 """
+
 import os
 import sys
 
@@ -91,5 +92,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n[FAIL] 测试失败: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
