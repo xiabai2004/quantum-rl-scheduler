@@ -67,8 +67,9 @@ def train(
     verbose,
 ):
     """训练智能体"""
-    from scripts.training.train_agent import main, parse_args
     import argparse
+
+    from scripts.training.train_agent import main, parse_args
 
     args_dict = {
         "timesteps": timesteps,
@@ -150,8 +151,9 @@ def serve(host, port, reload):
 @click.option("--port", type=int, default=8000, help="Web 端口")
 def demo(skip_train, skip_simulation, skip_web, port):
     """一键演示"""
-    from scripts.demo.demo import main
     import argparse
+
+    from scripts.demo.demo import main
 
     args = argparse.Namespace(
         skip_train=skip_train,
