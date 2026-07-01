@@ -1,7 +1,7 @@
 """pytest 配置：注册自定义标记 + CI 环境下跳过外部 SDK 依赖测试。"""
 
-import os
 import importlib
+import os
 
 import pytest
 
