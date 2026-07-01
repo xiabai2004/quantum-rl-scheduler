@@ -526,6 +526,10 @@ class QuantumSchedulingEnv(gym.Env):
         self._current_step += 1
         rng = self.np_random
 
+        # 本步总奖励从 0 开始累加。后续会把它拆成三类：
+        # 1) 执行动作本身的收益或惩罚，例如正确执行、错误分配、量子不可用；
+        # 2) 队列层面的全局惩罚，例如任务等待过久；
+        # 3) 资源利用率惩罚，例如大量量子比特长期空闲。
         reward = 0.0
 
         if self._current_task is not None:
@@ -533,6 +537,11 @@ class QuantumSchedulingEnv(gym.Env):
             is_compatible = self._check_compatibility(task, action)
 
             # ---- 判断兼容性 ----
+            # 兼容性是奖励计算的第一道门：
+            # - quantum 任务不能走纯经典；
+            # - classical 任务不能走纯量子；
+            # - universal 任务可以走经典、量子或混合。
+            # 不兼容时不执行任务，而是扣分并重新入队，提醒智能体避免错误路由。
             if not is_compatible:
                 reward += REWARD_MISMATCH
                 self._mismatch_count += 1
@@ -551,7 +560,10 @@ class QuantumSchedulingEnv(gym.Env):
                 selected_machine = None
                 if quantum_action:
                     selected_machine = self._select_best_machine(task)
-                # 量子不可用 = 需要量子但没有任何机器能接下该任务
+                # 量子不可用 = 需要量子但没有任何机器能接下该任务。
+                # 这里把“决策正确但资源暂时不可用”和“动作类型完全错误”区分开：
+                # - 纯量子动作：任务重新排队，只给半个 mismatch 惩罚；
+                # - 混合动作：允许降级为经典执行，避免系统完全空转。
                 quantum_unavailable = quantum_action and selected_machine is None
 
                 if quantum_unavailable:
@@ -576,6 +588,9 @@ class QuantumSchedulingEnv(gym.Env):
                         )
                 else:
                     # ---- 兼容分配：计算执行奖励 ----
+                    # 执行奖励由 _compute_execution_reward() 负责：
+                    # 经典执行给稳定基准分，量子执行按加速比和保真度放大，
+                    # 混合执行介于二者之间并受当前量子可用率影响。
                     reward += self._compute_execution_reward(task, action, rng)
                     self._total_scheduled += 1
 
@@ -605,9 +620,15 @@ class QuantumSchedulingEnv(gym.Env):
             reward -= 1.0
 
         # ---- 等待超时惩罚（遍历队列中所有任务） ----
+        # 这是一个全局队列惩罚：即使当前任务执行成功，如果队列里有任务
+        # 已经等待太久，本步总奖励也会被扣分。这样智能体会学到“别只挑
+        # 容易得分的任务，也要照顾快超时的任务”。
         reward += self._compute_wait_penalty()
 
         # ---- 量子比特利用率惩罚 ----
+        # available_ratio 越高表示空闲量子比特越多。若空闲比例高于
+        # 1 - QUBIT_UTIL_THRESHOLD，即实际利用率低于 30%，扣一小分，
+        # 鼓励策略在合适的时候把任务送到量子资源上。
         if self._quantum.available_ratio > (1.0 - QUBIT_UTIL_THRESHOLD):
             reward += REWARD_LOW_QUBIT_UTIL
 
@@ -975,15 +996,22 @@ class QuantumSchedulingEnv(gym.Env):
         rng: np.random.Generator,
     ) -> float:
         """
-        计算任务执行成功后的即时奖励（修改后）。
+        计算任务执行成功后的即时奖励。
+
+        这个函数只处理“任务已经被安排执行”的正向收益，不处理错误分配、
+        等待超时和低利用率惩罚；那些全局项在 step() 中统一累加。
 
         奖励规则：
-            - 经典执行 (action=0) : +5.0（基准奖励）
-            - 量子执行 (action=1) : +10 * 量子加速比（加速比在 [2, 5] 间随机）
-            - 混合执行 (action=2) : +7.0（介于经典和量子之间）
-
-        量子加速比会受到当前保真度的影响：保真度越高，加速比越大。
-        当保真度低于 0.9 时，量子执行奖励会打折。
+            - 经典执行 (action=0):
+              REWARD_CLASSICAL + REWARD_SUCCESS_BONUS，作为稳定基准。
+            - 量子执行 (action=1):
+              REWARD_QUANTUM_BASE * speedup + REWARD_SUCCESS_BONUS。
+              speedup 从 QUANTUM_SPEEDUP_RANGE 随机采样，并乘以保真度因子；
+              当保真度低于 0.9 时再乘 0.6，表示低质量量子结果的折扣。
+            - 混合执行 (action=2):
+              REWARD_HYBRID * hybrid_factor + REWARD_SUCCESS_BONUS。
+              hybrid_factor 随量子可用率从 0.5 到 1.0 变化，表示量子资源越充足，
+              混合执行越接近完整收益。
 
         Args:
             task   : 被执行的任务
@@ -994,6 +1022,7 @@ class QuantumSchedulingEnv(gym.Env):
             float: 计算得到的即时奖励
         """
         if action == ACTION_CLASSICAL:
+            # 经典执行不依赖量子机器状态，奖励最稳定，用作所有策略的基准线。
             return REWARD_CLASSICAL + REWARD_SUCCESS_BONUS
 
         elif action == ACTION_QUANTUM:
@@ -1003,15 +1032,15 @@ class QuantumSchedulingEnv(gym.Env):
             fidelity_factor = self._quantum.fidelity / 0.99  # 归一化到 ~1.0
             speedup *= fidelity_factor
             reward = REWARD_QUANTUM_BASE * speedup
-            # 保真度过低时打折
+            # 保真度过低时打折，避免智能体盲目偏向低质量量子资源。
             if self._quantum.fidelity < 0.9:
                 reward *= 0.6
             return reward + REWARD_SUCCESS_BONUS
 
         else:  # ACTION_HYBRID
-            # 混合执行奖励（固定值）
+            # 混合执行奖励介于经典和量子之间，并随量子可用率动态调整。
             base = REWARD_HYBRID
-            # 根据量子资源可用性调整
+            # available_ratio=0 时 factor=0.5，available_ratio=1 时 factor=1.0。
             hybrid_factor = 0.5 + 0.5 * self._quantum.available_ratio
             return base * hybrid_factor + REWARD_SUCCESS_BONUS
 
@@ -1216,7 +1245,7 @@ class QuantumSchedulingEnv(gym.Env):
         Returns:
             dict: 包含当前步数、统计摘要、资源状态、多机器调度详情等信息
         """
-        info = {
+        info: Dict[str, Any] = {
             "current_step": self._current_step,
             "max_steps": self._max_steps,
             "task_queue_length": len(self._task_queue),

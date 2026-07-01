@@ -289,7 +289,7 @@ if __name__ == "__main__":
     logger.info("工具函数模块测试")
 
     # 测试归一化
-    vector = [1, 2, 3, 4, 5]
+    vector = [1.0, 2.0, 3.0, 4.0, 5.0]
     normalized = normalize_vector(vector)
     print(f"归一化结果：{normalized}")
 
