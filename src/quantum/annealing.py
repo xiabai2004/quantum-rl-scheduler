@@ -22,6 +22,7 @@ import logging
 import math
 import os
 import random
+import time
 from typing import Any
 
 import numpy as np
@@ -1151,6 +1152,292 @@ class QuantumAnnealingOptimizer:
             energy: 目标函数值
         """
         return float(solution @ qubo_matrix @ solution)
+
+
+# ============================================================================
+# Issue #45: QUBO 矩阵构建性能剖析与加速
+# ============================================================================
+# 以下函数面向"任务调度"场景的 QUBO 构建（输入为任务优先级与处理时间），
+# 与上方 QuantumAnnealingOptimizer.network_to_qubo（面向神经网络权重）不同。
+# QUBO 模型（n×n，n 为任务数）：
+#   - 对角元    Q[i,i] = priority[i] * time[i]
+#     （单个任务被选中的线性代价，优先级与处理时间加权）
+#   - 非对角元  Q[i,j] = penalty * 0.5 * (p[i]*t[j] + p[j]*t[i])   (i != j)
+#     （任务对 i,j 同时调度时的二次冲突代价，对称）
+# 矩阵对称；当 priorities/times/penalty 非负时，矩阵非负。
+# ---------------------------------------------------------------------------
+
+
+def build_qubo_matrix(
+    task_priorities: np.ndarray,
+    task_times: np.ndarray,
+    penalty: float = 10.0,
+) -> np.ndarray:
+    """
+    构建任务调度 QUBO 矩阵（原版，基于双重 for 循环）
+
+    Args:
+        task_priorities: 任务优先级一维数组，形状 (n,)，建议非负
+        task_times      : 任务处理时间一维数组，形状 (n,)，建议非负
+        penalty         : 冲突惩罚系数，默认 10.0
+
+    Returns:
+        Q: (n, n) 对称 QUBO 矩阵
+
+    Raises:
+        ValueError: 当 task_priorities 与 task_times 形状不一致，
+                    或输入不是一维数组时
+    """
+    task_priorities = np.asarray(task_priorities, dtype=np.float64)
+    task_times = np.asarray(task_times, dtype=np.float64)
+
+    if task_priorities.shape != task_times.shape:
+        raise ValueError(
+            f"task_priorities 与 task_times 形状不一致: "
+            f"{task_priorities.shape} vs {task_times.shape}"
+        )
+    if task_priorities.ndim != 1:
+        raise ValueError(
+            f"task_priorities 必须为一维数组，实际 ndim={task_priorities.ndim}"
+        )
+
+    n = task_priorities.shape[0]
+    qubo = np.zeros((n, n), dtype=np.float64)
+
+    # 对角元：单任务线性代价
+    for i in range(n):
+        qubo[i, i] = task_priorities[i] * task_times[i]
+
+    # 非对角元：任务对冲突代价（双重循环，原版实现）
+    for i in range(n):
+        for j in range(n):
+            if i != j:
+                qubo[i, j] = 0.5 * penalty * (
+                    task_priorities[i] * task_times[j]
+                    + task_priorities[j] * task_times[i]
+                )
+
+    return qubo
+
+
+def build_qubo_matrix_optimized(
+    task_priorities: np.ndarray,
+    task_times: np.ndarray,
+    penalty: float = 10.0,
+) -> np.ndarray:
+    """
+    构建任务调度 QUBO 矩阵（优化版，numpy 向量化实现）
+
+    与 :func:`build_qubo_matrix` 等价，但用 numpy 广播（外积 + 转置）
+    代替双重 for 循环，在任务数较大时显著加速。
+
+    向量化推导：
+        设 P = priorities (n,), T = times (n,)
+        外积 PT = outer(P, T)，则 PT[i,j] = P[i]*T[j]
+        非对角元 = penalty * 0.5 * (PT + PT.T)[i,j]
+        对角元   = P * T  （覆盖非对角公式在对角处的值）
+
+    Args:
+        task_priorities: 任务优先级一维数组，形状 (n,)
+        task_times      : 任务处理时间一维数组，形状 (n,)
+        penalty         : 冲突惩罚系数，默认 10.0
+
+    Returns:
+        Q: (n, n) 对称 QUBO 矩阵，与 build_qubo_matrix 结果一致
+
+    Raises:
+        ValueError: 当 task_priorities 与 task_times 形状不一致，
+                    或输入不是一维数组时
+    """
+    task_priorities = np.asarray(task_priorities, dtype=np.float64)
+    task_times = np.asarray(task_times, dtype=np.float64)
+
+    if task_priorities.shape != task_times.shape:
+        raise ValueError(
+            f"task_priorities 与 task_times 形状不一致: "
+            f"{task_priorities.shape} vs {task_times.shape}"
+        )
+    if task_priorities.ndim != 1:
+        raise ValueError(
+            f"task_priorities 必须为一维数组，实际 ndim={task_priorities.ndim}"
+        )
+
+    n = task_priorities.shape[0]
+    # 外积 PT[i,j] = P[i] * T[j]；加上其转置得到对称的成对冲突代价
+    pt_outer = np.outer(task_priorities, task_times)
+    qubo = 0.5 * penalty * (pt_outer + pt_outer.T)
+    # 对角线单独覆盖为 P*T（非对角公式在对角处为 penalty*P*T，需替换）
+    diag_idx = np.arange(n)
+    qubo[diag_idx, diag_idx] = task_priorities * task_times
+    return qubo
+
+
+def profile_qubo_construction(n_tasks: int = 10, n_iterations: int = 100) -> dict:
+    """
+    剖析 QUBO 矩阵构建性能
+
+    随机生成任务优先级与处理时间（固定种子，可复现），多次调用
+    :func:`build_qubo_matrix`，用 time.perf_counter 统计构建耗时分布。
+
+    Args:
+        n_tasks     : 任务数量（生成数据的规模），默认 10
+        n_iterations: 重复构建次数，默认 100
+
+    Returns:
+        dict 包含：
+            - mean_time_ms : 平均耗时（毫秒）
+            - std_time_ms  : 耗时标准差（毫秒）
+            - min_time_ms  : 最小耗时（毫秒）
+            - max_time_ms  : 最大耗时（毫秒）
+            - matrix_size  : QUBO 矩阵边长（= n_tasks）
+            - n_tasks      : 任务数量
+
+    Raises:
+        ValueError: 当 n_tasks 为负或 n_iterations < 1 时
+    """
+    if n_tasks < 0:
+        raise ValueError(f"n_tasks 不能为负，实际: {n_tasks}")
+    if n_iterations < 1:
+        raise ValueError(f"n_iterations 必须 >= 1，实际: {n_iterations}")
+
+    rng = np.random.default_rng(seed=42)
+    task_priorities = rng.uniform(1.0, 10.0, size=n_tasks)
+    task_times = rng.uniform(1.0, 20.0, size=n_tasks)
+
+    timings_ms = np.empty(n_iterations, dtype=np.float64)
+    qubo = np.zeros((0, 0), dtype=np.float64)
+    for k in range(n_iterations):
+        t0 = time.perf_counter()
+        qubo = build_qubo_matrix(task_priorities, task_times)
+        t1 = time.perf_counter()
+        timings_ms[k] = (t1 - t0) * 1000.0
+
+    return {
+        "mean_time_ms": float(np.mean(timings_ms)),
+        "std_time_ms": float(np.std(timings_ms)),
+        "min_time_ms": float(np.min(timings_ms)),
+        "max_time_ms": float(np.max(timings_ms)),
+        "matrix_size": int(qubo.shape[0]),
+        "n_tasks": int(n_tasks),
+    }
+
+
+def benchmark_qubo_versions(n_tasks: int = 10, n_iterations: int = 50) -> dict:
+    """
+    对比原版与优化版 QUBO 矩阵构建的性能与正确性
+
+    使用相同的随机任务数据（固定种子），分别多次计时两个版本，
+    并验证结果一致性。
+
+    Args:
+        n_tasks     : 任务数量，默认 10
+        n_iterations: 每个版本重复构建次数，默认 50
+
+    Returns:
+        dict 包含：
+            - original_mean_ms : 原版平均耗时（毫秒）
+            - optimized_mean_ms: 优化版平均耗时（毫秒）
+            - speedup          : 加速比 = original_mean_ms / optimized_mean_ms
+            - results_match    : 两版结果是否一致（np.allclose）
+
+    Raises:
+        ValueError: 当 n_tasks 为负或 n_iterations < 1 时
+    """
+    if n_tasks < 0:
+        raise ValueError(f"n_tasks 不能为负，实际: {n_tasks}")
+    if n_iterations < 1:
+        raise ValueError(f"n_iterations 必须 >= 1，实际: {n_iterations}")
+
+    rng = np.random.default_rng(seed=42)
+    task_priorities = rng.uniform(1.0, 10.0, size=n_tasks)
+    task_times = rng.uniform(1.0, 20.0, size=n_tasks)
+
+    # 原版计时
+    orig_timings = np.empty(n_iterations, dtype=np.float64)
+    qubo_orig = np.zeros((0, 0), dtype=np.float64)
+    for k in range(n_iterations):
+        t0 = time.perf_counter()
+        qubo_orig = build_qubo_matrix(task_priorities, task_times)
+        t1 = time.perf_counter()
+        orig_timings[k] = (t1 - t0) * 1000.0
+
+    # 优化版计时
+    opt_timings = np.empty(n_iterations, dtype=np.float64)
+    qubo_opt = np.zeros((0, 0), dtype=np.float64)
+    for k in range(n_iterations):
+        t0 = time.perf_counter()
+        qubo_opt = build_qubo_matrix_optimized(task_priorities, task_times)
+        t1 = time.perf_counter()
+        opt_timings[k] = (t1 - t0) * 1000.0
+
+    results_match = bool(np.allclose(qubo_orig, qubo_opt))
+    orig_mean = float(np.mean(orig_timings))
+    opt_mean = float(np.mean(opt_timings))
+    speedup = float(orig_mean / opt_mean) if opt_mean > 0 else float("inf")
+
+    return {
+        "original_mean_ms": orig_mean,
+        "optimized_mean_ms": opt_mean,
+        "speedup": speedup,
+        "results_match": results_match,
+    }
+
+
+def find_optimal_qubo_params(
+    task_priorities: np.ndarray,
+    task_times: np.ndarray,
+    param_grid: dict | None = None,
+) -> dict:
+    """
+    网格搜索最优 penalty 参数
+
+    对每个候选 penalty 构建 QUBO 矩阵，计算参考解 x = ones(n)（全选所有任务）
+    的能量 E = x^T Q x 作为可比指标，选择使能量最低的 penalty。
+
+    评价准则说明：以全 1 解的能量衡量 QUBO 矩阵的整体代价规模，
+    能量越低代表该 penalty 下同时调度所有任务的总代价越小。
+    当 priorities/times 非负时，能量随 penalty 单调递增，
+    故 best_penalty 通常为网格中的最小值。
+
+    Args:
+        task_priorities: 任务优先级一维数组
+        task_times      : 任务处理时间一维数组
+        param_grid      : 搜索网格，形如 {"penalty": [1.0, 5.0, ...]}。
+                          默认 {"penalty": [1.0, 5.0, 10.0, 50.0, 100.0]}
+
+    Returns:
+        dict 包含：
+            - best_penalty : 最优 penalty 值（属于网格）
+            - best_energy  : 对应最低能量
+            - all_results  : 列表，每项 {"penalty": p, "energy": e}
+    """
+    if param_grid is None:
+        param_grid = {"penalty": [1.0, 5.0, 10.0, 50.0, 100.0]}
+
+    penalties = param_grid.get("penalty", [10.0])
+    task_priorities = np.asarray(task_priorities, dtype=np.float64)
+    task_times = np.asarray(task_times, dtype=np.float64)
+
+    n = task_priorities.shape[0]
+    x = np.ones(n, dtype=np.float64)
+
+    all_results: list[dict] = []
+    best_penalty = float(penalties[0]) if penalties else 10.0
+    best_energy = float("inf")
+
+    for p in penalties:
+        qubo = build_qubo_matrix_optimized(task_priorities, task_times, penalty=float(p))
+        energy = float(x @ qubo @ x) if n > 0 else 0.0
+        all_results.append({"penalty": float(p), "energy": energy})
+        if energy < best_energy:
+            best_energy = energy
+            best_penalty = float(p)
+
+    return {
+        "best_penalty": best_penalty,
+        "best_energy": best_energy,
+        "all_results": all_results,
+    }
 
 
 # ============================================================================
