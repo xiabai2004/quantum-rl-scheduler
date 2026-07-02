@@ -1522,7 +1522,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 # ============================================================
 
 
-def start_web_server(host: str = "0.0.0.0", port: int = 8000) -> None:
+def start_web_server(
+    host: str = "0.0.0.0", port: int = 8000
+) -> None:  # nosec B104: demo/dev binding
     """启动 Web 服务器"""
     import uvicorn
 
