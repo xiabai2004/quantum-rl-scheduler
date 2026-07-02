@@ -146,9 +146,9 @@ class MultiAgentEnvWrapper:
             形状 (local_obs_dim * num_agents,) 的 float32 向量
         """
         local_obs = self.get_local_observations()
-        return np.concatenate([local_obs[name] for name in self.machine_names]).astype(  # type: ignore[no-any-return]
-            np.float32
-        )
+        return np.concatenate(  # type: ignore[no-any-return]
+            [local_obs[name] for name in self.machine_names]
+        ).astype(np.float32)
 
     # ------------------------------------------------------------------
     # 动作聚合与路由

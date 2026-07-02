@@ -281,6 +281,7 @@ class MultiObjectiveRewardWrapper(gym.Wrapper):
             float: 服务质量目标值 [-1, 0]
         """
         from src.scheduler.env import QuantumSchedulingEnv
+
         env: QuantumSchedulingEnv = self.env.unwrapped  # type: ignore[assignment]
         if not env._task_queue:
             return 0.0

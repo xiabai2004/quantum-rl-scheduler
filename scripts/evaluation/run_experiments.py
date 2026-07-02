@@ -308,11 +308,11 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print("实验数据固化脚本")
     print(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"参数: episodes={args.episodes}, tasks={args.tasks}, seed={args.seed}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     all_results = {}
 
@@ -338,9 +338,9 @@ def main():
     generate_charts(all_results, args.output_dir, timestamp)
     print("[保存] 图表已生成")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("实验完成！")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
 
 if __name__ == "__main__":
