@@ -12,9 +12,12 @@ Cqlib Wrapper for Tianyan Cloud Platform
 """
 
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from src.api.quota_tracker import QuotaTracker
 
 
 class CqlibTianyanClient:
@@ -46,6 +49,7 @@ class CqlibTianyanClient:
         login_key: str,
         machine_name: str = "tianyan_s",
         auto_retry_machine: bool = True,
+        quota_tracker: "QuotaTracker | None" = None,
     ):
         """初始化 cqlib 客户端
 
@@ -53,6 +57,8 @@ class CqlibTianyanClient:
             login_key: API Key（从个人中心获取）
             machine_name: 默认使用的量子计算机名称
             auto_retry_machine: 当前机器不可用时是否自动切换
+            quota_tracker: 真机配额追踪器（可选，传入后提交前做配额预检，
+                          提交成功后记录消耗；为 None 时不做配额控制）
         """
         import cqlib
 
@@ -61,6 +67,7 @@ class CqlibTianyanClient:
         self.machine_name = machine_name
         self.auto_retry_machine = auto_retry_machine
         self._platform = None
+        self._quota_tracker = quota_tracker
 
         logger.info(f"[Cqlib] 客户端初始化，默认机器={machine_name}")
 
@@ -142,6 +149,13 @@ class CqlibTianyanClient:
         else:
             raise ValueError("必须提供 qcis 或 circuit")
 
+        # 配额预检查：配额不足时跳过提交，保持"全部不可用返回 None"语义
+        if self._quota_tracker is not None and not self._quota_tracker.can_consume(
+            shots=shots, tasks=1
+        ):
+            logger.warning(f"[Cqlib] 真机配额不足，跳过提交: {task_name}, shots={shots}")
+            return None
+
         logger.info(f"[Cqlib] 提交量子任务: {task_name}, shots={shots}")
         logger.debug(f"[Cqlib] QCIS: {qcis_str[:100]}")
 
@@ -162,7 +176,13 @@ class CqlibTianyanClient:
             if isinstance(result, list) and len(result) > 0:
                 task_id = str(result[0])
                 logger.info(f"[Cqlib] 任务已提交: {task_id}")
+                # 提交成功后记录配额消耗
+                if self._quota_tracker is not None:
+                    self._quota_tracker.consume(shots=shots, tasks=1)
                 return task_id
+            # 非列表结果同样视为提交成功，记录配额消耗
+            if self._quota_tracker is not None:
+                self._quota_tracker.consume(shots=shots, tasks=1)
             return str(result)
         except Exception as e:
             # cqlib 提交接口异常类型无法穷举，保留宽捕获并记录日志
@@ -259,6 +279,9 @@ class CqlibTianyanClient:
                 if isinstance(result, list) and len(result) > 0:
                     tid = str(result[0])
                     logger.info(f"[Cqlib] {machine} 提交成功: {tid}")
+                # 备用机器提交成功后记录配额消耗（与主路径一致）
+                if self._quota_tracker is not None:
+                    self._quota_tracker.consume(shots=shots, tasks=1)
                 return tid
             except Exception as e:
                 # cqlib 备用机器提交异常类型无法穷举，保留宽捕获并记录日志
@@ -321,6 +344,53 @@ class CqlibTianyanClient:
             "available": [m["name"] for m in machines if m["status"] == "running"],
         }
 
+    def is_available(self) -> bool:
+        """检查真机是否可用（用于降级判断）。
+
+        判定逻辑：
+            1. 平台连接可建立（authenticate 通过）
+            2. 当前机器在列表中且状态为 running
+
+        任何异常均视为不可用，调用方可据此降级到 Mock。
+
+        Returns:
+            bool: True 表示真机可提交，False 表示应降级
+        """
+        try:
+            if not self.authenticate():
+                return False
+            return self._is_machine_available(self.machine_name)
+        except Exception as e:
+            # cqlib 平台访问异常类型无法穷举，保留宽捕获并记录日志
+            logger.debug(f"[Cqlib] is_available 检查失败: {e}")
+            return False
+
+    def submit_and_get_task_id(
+        self,
+        qcis: str,
+        shots: int = 512,
+        task_name: str = "Scheduler_Real_Task",
+    ) -> str | None:
+        """提交量子任务并立即返回 task_id（非阻塞）。
+
+        本方法是 ``submit_quantum_task`` 的语义化别名，强调“提交后立即返回，
+        不等待结果”，便于调度循环在 step() 中非阻塞调用，后续通过
+        ``get_task_status`` 轮询结果。
+
+        Args:
+            qcis      : QCIS 指令字符串
+            shots     : 测量次数
+            task_name : 任务名称
+
+        Returns:
+            task_id 字符串；提交失败或真机不可用时返回 None
+        """
+        return self.submit_quantum_task(
+            qcis=qcis,
+            shots=shots,
+            task_name=task_name,
+        )
+
 
 class MultiMachineCqlibCoordinator:
     """多机器 cqlib 协调器：统一管理多台天衍云真机的提交与状态聚合。
@@ -343,6 +413,7 @@ class MultiMachineCqlibCoordinator:
         login_key: str,
         machine_names: list[str],
         auto_retry_machine: bool = False,
+        quota_tracker: "QuotaTracker | None" = None,
     ):
         """初始化多机器协调器。
 
@@ -351,10 +422,13 @@ class MultiMachineCqlibCoordinator:
             machine_names    : 要纳管的机器名列表
             auto_retry_machine: 单机提交失败时是否自动切换其他机器（默认 False，
                                多机器场景下由调度器决定路由，通常关闭单机重试）
+            quota_tracker    : 真机配额追踪器（可选，传入后 submit_to_machine
+                              成功时记录消耗；为 None 时不做配额记录）
         """
         self.login_key = login_key
         self.machine_names = list(machine_names)
         self.auto_retry_machine = auto_retry_machine
+        self._quota_tracker = quota_tracker
         self._clients: dict[str, CqlibTianyanClient] = {}
         self._submit_count: dict[str, int] = dict.fromkeys(self.machine_names, 0)
         self._fail_count: dict[str, int] = dict.fromkeys(self.machine_names, 0)
@@ -395,6 +469,9 @@ class MultiMachineCqlibCoordinator:
             client = self._get_client(machine_name)
             task_id = client.submit_quantum_task(qcis=qcis, shots=shots, task_name=task_name)
             self._submit_count[machine_name] = self._submit_count.get(machine_name, 0) + 1
+            # 提交成功后记录配额消耗（仅当 task_id 非 None 时）
+            if self._quota_tracker is not None and task_id is not None:
+                self._quota_tracker.consume(shots=shots, tasks=1)
             return task_id
         except Exception as e:
             # 涉及客户端获取（ValueError）与提交，异常类型无法穷举，保留宽捕获并记录日志
