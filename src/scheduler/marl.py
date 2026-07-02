@@ -24,6 +24,7 @@ Multi-Agent PPO for Quantum-Classical Hybrid Task Scheduling
     from src.scheduler.marl import MultiAgentPPO
 
     env = QuantumSchedulingEnv(machine_configs=DEFAULT_MACHINE_CONFIGS)
+
     agent = MultiAgentPPO(env, learning_rate=3e-4, n_steps=1024)
     agent.train(total_timesteps=50000)
     agent.save("./models/mappo")
@@ -41,8 +42,6 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn as nn
-
-logger = logging.getLogger(__name__)
 from torch.optim import Adam
 
 # 复用现有环境常量，确保观测维度与原环境一致
