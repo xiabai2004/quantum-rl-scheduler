@@ -12,12 +12,12 @@ Benchmark 结果跨版本追踪与性能回归检测工具
 使用示例：
     # 基本用法：追踪 benchmark 结果
     python scripts/ci/benchmark_tracker.py benchmark_results.json
-    
+
     # 自定义历史记录路径和回归阈值
     python scripts/ci/benchmark_tracker.py benchmark_results.json \
         --history-path results/benchmark_history.jsonl \
         --threshold 15.0
-    
+
     # 生成对比报告
     python scripts/ci/benchmark_tracker.py benchmark_results.json --report
 
@@ -44,7 +44,7 @@ class BenchmarkTracker:
     ) -> None:
         """
         初始化追踪器
-        
+
         Args:
             history_path: 历史记录文件路径（JSONL 格式）
             threshold: 性能回归阈值（百分比），默认 10%
@@ -58,7 +58,7 @@ class BenchmarkTracker:
     def _get_git_info(self) -> dict[str, str]:
         """
         获取当前 git 信息（commit hash 和分支名）
-        
+
         Returns:
             包含 commit 和 branch 的字典
         """
@@ -85,10 +85,10 @@ class BenchmarkTracker:
     def read_benchmark_results(self, json_path: Path) -> list[dict[str, Any]]:
         """
         读取 pytest-benchmark 生成的 JSON 结果文件
-        
+
         Args:
             json_path: pytest-benchmark --benchmark-json 输出的文件路径
-            
+
         Returns:
             benchmark 结果列表，每项包含 name, mean, stddev, rounds
         """
@@ -114,7 +114,7 @@ class BenchmarkTracker:
     ) -> None:
         """
         将 benchmark 结果追加到历史记录文件
-        
+
         Args:
             benchmarks: benchmark 结果列表
             timestamp: 时间戳，默认使用当前时间
@@ -140,7 +140,7 @@ class BenchmarkTracker:
     def load_previous_entry(self) -> dict[str, Any] | None:
         """
         从历史记录中加载上一次的结果
-        
+
         Returns:
             上一次的历史记录条目，如果历史记录为空则返回 None
         """
@@ -167,11 +167,11 @@ class BenchmarkTracker:
     ) -> list[dict[str, Any]]:
         """
         检测性能回归
-        
+
         Args:
             current: 当前 benchmark 结果
             previous: 上一次 benchmark 结果
-            
+
         Returns:
             回归列表，每项包含 name, previous_mean, current_mean, change_percent
         """
@@ -190,10 +190,7 @@ class BenchmarkTracker:
             prev_mean = prev_map[name]
 
             # 计算变化百分比：(当前 - 上次) / 上次 * 100
-            if prev_mean > 0:
-                change_percent = ((curr_mean - prev_mean) / prev_mean) * 100.0
-            else:
-                change_percent = 0.0
+            change_percent = (curr_mean - prev_mean) / prev_mean * 100.0 if prev_mean > 0 else 0.0
 
             # 如果变化超过阈值，记录为回归
             if change_percent > self.threshold:
@@ -213,11 +210,11 @@ class BenchmarkTracker:
     ) -> str:
         """
         生成对比报告表格
-        
+
         Args:
             current: 当前 benchmark 结果
             previous: 上一次 benchmark 结果（可选）
-            
+
         Returns:
             格式化的报告字符串
         """
@@ -288,7 +285,7 @@ class BenchmarkTracker:
 def main() -> int:
     """
     主函数：解析命令行参数并执行 benchmark 追踪
-    
+
     Returns:
         退出码：0 表示成功，1 表示检测到性能回归
     """
@@ -299,12 +296,12 @@ def main() -> int:
 示例：
   # 基本用法
   python scripts/ci/benchmark_tracker.py benchmark_results.json
-  
+
   # 自定义历史记录路径和阈值
   python scripts/ci/benchmark_tracker.py results.json \\
       --history-path custom_history.jsonl \\
       --threshold 15.0
-  
+
   # 生成对比报告
   python scripts/ci/benchmark_tracker.py results.json --report
         """

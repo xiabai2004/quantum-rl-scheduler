@@ -44,7 +44,7 @@ class SubmissionValidator:
             with open(self.manifest_path, encoding="utf-8") as f:
                 return yaml.safe_load(f)
         except Exception as e:
-            raise RuntimeError(f"无法加载清单文件: {e}")
+            raise RuntimeError(f"无法加载清单文件: {e}") from e
 
     def validate_all(self) -> bool:
         """
