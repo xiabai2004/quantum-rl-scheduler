@@ -32,6 +32,8 @@ Multi-Agent PPO for Quantum-Classical Hybrid Task Scheduling
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import random
 from typing import Any
@@ -47,6 +49,8 @@ from src.scheduler.env import (
     OBS_DIM,
     QuantumSchedulingEnv,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # 多智能体环境包装器
@@ -142,7 +146,9 @@ class MultiAgentEnvWrapper:
             形状 (local_obs_dim * num_agents,) 的 float32 向量
         """
         local_obs = self.get_local_observations()
-        return np.concatenate([local_obs[name] for name in self.machine_names]).astype(np.float32)
+        return np.concatenate(  # type: ignore[no-any-return]
+            [local_obs[name] for name in self.machine_names]
+        ).astype(np.float32)
 
     # ------------------------------------------------------------------
     # 动作聚合与路由
@@ -361,7 +367,7 @@ class ActorNet(nn.Module):
             logits 张量，形状 (batch, action_dim)
         """
         features = self.feature(obs)
-        return self.action_head(features)
+        return self.action_head(features)  # type: ignore[no-any-return]
 
     def get_action(
         self, obs: torch.Tensor, deterministic: bool = False
@@ -435,7 +441,7 @@ class CentralizedCritic(nn.Module):
         Returns:
             价值张量，形状 (batch,)
         """
-        return self.net(global_state).squeeze(-1)
+        return self.net(global_state).squeeze(-1)  # type: ignore[no-any-return]
 
 
 # ---------------------------------------------------------------------------
@@ -749,7 +755,7 @@ class MultiAgentPPO:
         eval_freq: int = 5000,
         n_eval_episodes: int = 5,
         log_interval: int = 1,
-        **kwargs,
+        **kwargs: Any,
     ) -> MultiAgentPPO:
         """
         训练 MAPPO 智能体。
@@ -827,6 +833,10 @@ class MultiAgentPPO:
         self.buffer.reset()
         ep_rewards: list[float] = []
         cur_ep_reward = 0.0
+
+        # 确保在 train() 中已初始化
+        assert self._last_obs is not None, "必须先调用 train() 初始化观测"
+        assert self._last_global_state is not None, "必须先调用 train() 初始化全局状态"
 
         for _ in range(self.n_steps):
             actions, log_probs, value = self._sample_actions(self._last_obs)
@@ -1018,17 +1028,21 @@ class MultiAgentPPO:
     def _save_internal(self, path: str) -> None:
         """内部保存（不打印日志），用于 best_model 检查点。"""
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        # 将权重数据与配置分离，权重用 torch.save(weights_only=True) 安全保存
         state = {
             "actors": [actor.state_dict() for actor in self.actors],
             "critic": self.critic.state_dict(),
-            "config": {
-                "num_agents": self.num_agents,
-                "local_obs_dim": self.local_obs_dim,
-                "global_state_dim": self.global_state_dim,
-                "machine_names": self.machine_names,
-            },
+        }
+        config = {
+            "num_agents": self.num_agents,
+            "local_obs_dim": self.local_obs_dim,
+            "global_state_dim": self.global_state_dim,
+            "machine_names": self.machine_names,
         }
         torch.save(state, path + ".pt")
+        # 配置单独保存为 JSON（避免 torch.load 反序列化风险）
+        with open(path + "_config.json", "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
 
     def save(self, path: str) -> None:
         """
@@ -1039,7 +1053,7 @@ class MultiAgentPPO:
         """
         self._save_internal(path)
         if self.verbose >= 1:
-            print(f"[MAPPO] 模型已保存至: {path}.pt")
+            print(f"[MAPPO] 模型已保存至: {path}.pt + {path}_config.json")
 
     def load(self, path: str) -> None:
         """
@@ -1050,8 +1064,20 @@ class MultiAgentPPO:
         """
         if not path.endswith(".pt"):
             path = path + ".pt"
-        state = torch.load(path, map_location=self.device, weights_only=False)
-        cfg = state["config"]
+
+        # 优先从独立 JSON 加载配置（新格式，weights_only=True 安全）
+        config_path = path.replace(".pt", "_config.json")
+        if os.path.exists(config_path):
+            with open(config_path, encoding="utf-8") as f:
+                cfg = json.load(f)
+            state = torch.load(path, map_location=self.device, weights_only=True)
+        else:
+            # 兼容旧格式：配置嵌入在 .pt 文件中，需 weights_only=False
+            logger.warning("模型文件使用旧格式（配置嵌入 pickle），建议重新保存以启用安全加载。")
+            state = torch.load(
+                path, map_location=self.device, weights_only=False
+            )  # nosec B614: 旧格式兼容路径，仅当缺少 _config.json 时使用
+            cfg = state.pop("config")
         # 校验配置一致性
         if cfg["num_agents"] != self.num_agents:
             raise ValueError(

@@ -430,7 +430,7 @@ def test_websocket_endpoint_init_ping_and_invalid_json():
         return None
 
     with (
-        patch("src.visualization.app.simulate_scheduler", _noop_simulate),
+        patch.object(app_module, "simulate_scheduler", _noop_simulate),
         TestClient(app) as client,
         client.websocket_connect("/ws") as ws,
     ):

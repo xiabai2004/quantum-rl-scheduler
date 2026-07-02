@@ -64,7 +64,7 @@ class CircuitBreaker:
         self.failure_count = 0
         self.last_failure_time = 0.0
 
-    def before_request(self):
+    def before_request(self) -> None:
         """请求前检查熔断器状态"""
         if self.state == CircuitState.OPEN:
             if monotonic() - self.last_failure_time >= self.recovery_timeout:
@@ -72,12 +72,12 @@ class CircuitBreaker:
             else:
                 raise CircuitOpenError("Circuit breaker is open")
 
-    def on_success(self):
+    def on_success(self) -> None:
         """请求成功时重置状态"""
         self.failure_count = 0
         self.state = CircuitState.CLOSED
 
-    def on_failure(self):
+    def on_failure(self) -> None:
         """请求失败时增加失败计数"""
         self.failure_count += 1
         self.last_failure_time = monotonic()
