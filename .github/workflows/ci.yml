@@ -143,3 +143,59 @@ jobs:
             --show-error-codes \
             --pretty \
             || echo "[INFO] mypy found type issues — review and fix incrementally"
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Benchmark 回归检测
+  # ---------------------------------------------------------------------------
+  benchmarks:
+    name: "Benchmarks (regression check)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run benchmarks
+        run: >
+          python -m pytest tests/benchmarks/
+          --benchmark-only
+          --benchmark-json=benchmark_results.json
+          -W ignore::DeprecationWarning
+
+      - name: Download baseline benchmark
+        continue-on-error: true
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: ci.yml
+          workflow_conclusion: success
+          name: benchmark-baseline
+          path: baseline/
+
+      - name: Compare with baseline
+        continue-on-error: true
+        run: |
+          if [ -f baseline/benchmark_results.json ]; then
+            python scripts/benchmarking/compare_regression.py \
+              benchmark_results.json \
+              baseline/benchmark_results.json
+          else
+            echo "[INFO] 无基线数据，跳过回归比较（当前结果将作为新基线）"
+            python scripts/benchmarking/compare_regression.py benchmark_results.json
+          fi
+
+      - name: Upload benchmark artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-baseline
+          path: benchmark_results.json
+          retention-days: 90
