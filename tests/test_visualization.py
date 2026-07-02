@@ -223,6 +223,161 @@ async def test_update_status(async_client):
 
 
 # ============================================================
+# 认证层与输入验证
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_api_key_auth_disabled(async_client, monkeypatch):
+    """未配置 VISUALIZATION_API_KEY 时认证禁用，无 X-API-Key 也能访问 POST 端点。"""
+    monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+    resp = await async_client.post("/api/strategy", params={"strategy": "FCFS"})
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_api_key_auth_enabled(async_client, monkeypatch):
+    """配置 VISUALIZATION_API_KEY 后，携带正确 X-API-Key 应访问成功。"""
+    monkeypatch.setenv("VISUALIZATION_API_KEY", "secret-key-123")
+    resp = await async_client.post(
+        "/api/strategy",
+        params={"strategy": "FCFS"},
+        headers={"X-API-Key": "secret-key-123"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_api_key_auth_wrong_key(async_client, monkeypatch):
+    """配置 VISUALIZATION_API_KEY 后，错误 X-API-Key 应返回 401。"""
+    monkeypatch.setenv("VISUALIZATION_API_KEY", "secret-key-123")
+    resp = await async_client.post(
+        "/api/strategy",
+        params={"strategy": "FCFS"},
+        headers={"X-API-Key": "wrong-key"},
+    )
+    assert resp.status_code == 401
+    assert "API" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_api_key_auth_missing_header(async_client, monkeypatch):
+    """配置 VISUALIZATION_API_KEY 后，缺少 X-API-Key 头应返回 401。"""
+    monkeypatch.setenv("VISUALIZATION_API_KEY", "secret-key-123")
+    resp = await async_client.post("/api/strategy", params={"strategy": "FCFS"})
+    assert resp.status_code == 401
+    assert "API" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_api_key_auth_protects_all_post_endpoints(async_client, monkeypatch):
+    """配置密钥后，所有 POST 端点（tasks/strategy/update）都应受认证保护。"""
+    monkeypatch.setenv("VISUALIZATION_API_KEY", "secret-key-123")
+    # POST /api/tasks 无头应 401
+    resp_tasks = await async_client.post(
+        "/api/tasks",
+        json={
+            "user_id": "u",
+            "task_type": "quantum",
+            "priority": 3,
+            "qubit_count": 4,
+            "circuit_depth": 10,
+            "estimated_time": 5.0,
+        },
+    )
+    assert resp_tasks.status_code == 401
+    # POST /api/update 无头应 401
+    resp_update = await async_client.post(
+        "/api/update",
+        json={
+            "qubit_utilization": 0.5,
+            "queue_length": 1,
+            "completed_tasks": 1,
+            "average_wait_time": 1.0,
+        },
+    )
+    assert resp_update.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_api_key_auth_does_not_affect_get(async_client, monkeypatch):
+    """配置密钥后，GET 端点（status/tasks/metrics）不应受认证影响。"""
+    monkeypatch.setenv("VISUALIZATION_API_KEY", "secret-key-123")
+    # GET /api/status 无头应 200
+    assert (await async_client.get("/api/status")).status_code == 200
+    # GET /api/tasks 无头应 200
+    assert (await async_client.get("/api/tasks")).status_code == 200
+    # GET /api/metrics 无头应 200
+    assert (await async_client.get("/api/metrics")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_input_validation_empty_task(async_client, monkeypatch):
+    """POST /api/tasks 空 user_id 应被 Pydantic 拒绝（422）。"""
+    monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+    payload = {
+        "user_id": "",
+        "task_type": "quantum",
+        "priority": 3,
+        "qubit_count": 4,
+        "circuit_depth": 10,
+        "estimated_time": 5.0,
+    }
+    resp = await async_client.post("/api/tasks", json=payload)
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_input_validation_empty_task_type(async_client, monkeypatch):
+    """POST /api/tasks 空 task_type 应被 Pydantic 拒绝（422）。"""
+    monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+    payload = {
+        "user_id": "user_001",
+        "task_type": "",
+        "priority": 3,
+        "qubit_count": 4,
+        "circuit_depth": 10,
+        "estimated_time": 5.0,
+    }
+    resp = await async_client.post("/api/tasks", json=payload)
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_input_validation_qubit_count_exceeds_limit(async_client, monkeypatch):
+    """POST /api/tasks qubit_count 超过 287 上限应被拒绝（422）。"""
+    monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+    payload = {
+        "user_id": "user_001",
+        "task_type": "quantum",
+        "priority": 3,
+        "qubit_count": 999,
+        "circuit_depth": 10,
+        "estimated_time": 5.0,
+    }
+    resp = await async_client.post("/api/tasks", json=payload)
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_input_validation_oversized_user_id(async_client, monkeypatch):
+    """POST /api/tasks 超长 user_id（>128 字符）应被拒绝（422）。"""
+    monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+    payload = {
+        "user_id": "a" * 200,
+        "task_type": "quantum",
+        "priority": 3,
+        "qubit_count": 4,
+        "circuit_depth": 10,
+        "estimated_time": 5.0,
+    }
+    resp = await async_client.post("/api/tasks", json=payload)
+    assert resp.status_code == 422
+
+
+# ============================================================
 # 真机状态与提交记录路由
 # ============================================================
 

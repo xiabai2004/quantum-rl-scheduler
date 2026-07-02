@@ -54,6 +54,52 @@ MAX_QUBITS: int = 287
 MAX_CIRCUIT_DEPTH: int = 10000
 MAX_SHOTS: int = 100000
 
+# 输入安全约束
+MAX_INPUT_LENGTH: int = 102400  # 单个字符串输入上限 100KB
+# 危险字符模式：null 字节、除常见空白外的控制字符
+_DANGEROUS_CTRL_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _validate_input_length(value: Any, max_input_length: int) -> None:
+    """校验字符串输入长度，超出上限时抛出 ValueError。
+
+    Args:
+        value: 待校验的输入值（仅对 str 类型检查长度）。
+        max_input_length: 允许的最大字符数。
+
+    Raises:
+        ValueError: 输入字符串长度超过 ``max_input_length``。
+    """
+    if isinstance(value, str) and len(value) > max_input_length:
+        raise ValueError(
+            f"输入长度 {len(value)} 超过上限 {max_input_length}（防止滥用/DoS）。"
+        )
+
+
+def _sanitize_string(value: str, max_input_length: int = MAX_INPUT_LENGTH) -> str:
+    """清理单个字符串输入：长度校验 + 去除首尾空白 + 危险字符检测。
+
+    Args:
+        value: 待清理的字符串。
+        max_input_length: 允许的最大字符数。
+
+    Returns:
+        去除首尾空白后的字符串。
+
+    Raises:
+        ValueError: 长度超限或包含危险控制字符（null 字节等）。
+    """
+    if not isinstance(value, str):
+        raise TypeError(f"期望 str 类型，得到 {type(value).__name__}")
+    if len(value) > max_input_length:
+        raise ValueError(
+            f"输入长度 {len(value)} 超过上限 {max_input_length}（防止滥用/DoS）。"
+        )
+    stripped = value.strip()
+    if _DANGEROUS_CTRL_PATTERN.search(stripped):
+        raise ValueError("输入包含非法控制字符（null 字节或其它控制字符）。")
+    return stripped
+
 
 # ============================================================
 # Task dataclass — 规范化任务表示
@@ -269,30 +315,42 @@ class TaskParser:
     # 1. parse — 字典 → Task
     # ----------------------------------------------------------
 
-    def parse(self, task_dict: dict[str, Any]) -> Task:
+    def parse(self, task_dict: dict[str, Any], max_input_length: int = MAX_INPUT_LENGTH) -> Task:
         """
         将字典解析为 Task 对象。
 
         Args:
             task_dict: 任务描述字典。
+            max_input_length: 单个字符串字段允许的最大字符数，默认 100KB。
 
         Returns:
             解析后的 Task 对象。
 
         Raises:
             TypeError:  输入不是字典。
-            ValueError:  缺少必填字段或字段类型不合法。
+            ValueError:  缺少必填字段、字段类型不合法、输入超长或含危险字符。
         """
         if not isinstance(task_dict, dict):
             raise TypeError(f"task_dict must be a dict, got {type(task_dict).__name__}")
 
+        # 输入安全：校验所有字符串值长度，并对已知字符串字段去除首尾空白
+        sanitized = dict(task_dict)
+        _string_fields = ("task_id", "task_type", "type", "algorithm", "status", "deadline")
+        for key, value in list(sanitized.items()):
+            _validate_input_length(value, max_input_length)
+            if key in _string_fields and isinstance(value, str):
+                stripped = value.strip()
+                if _DANGEROUS_CTRL_PATTERN.search(stripped):
+                    raise ValueError(f"字段 '{key}' 包含非法控制字符。")
+                sanitized[key] = stripped
+
         # 必填字段检查
         required_keys = {"task_id"}
-        missing = required_keys - set(task_dict.keys())
+        missing = required_keys - set(sanitized.keys())
         if missing:
             raise ValueError(f"Missing required fields: {sorted(missing)}")
 
-        task = TaskBuilder.from_dict(task_dict).build()
+        task = TaskBuilder.from_dict(sanitized).build()
 
         # 解析后自动校验
         errors = self._collect_errors(task)
@@ -612,17 +670,39 @@ class LegacyTaskParser:
     def __init__(self) -> None:
         self.supported_formats = ["json", "yaml", "qasm", "text"]
 
-    def parse(self, task_description: str, format: str = "json") -> TaskFeatures | None:
+    def parse(
+        self,
+        task_description: str,
+        format: str = "json",
+        max_input_length: int = MAX_INPUT_LENGTH,
+    ) -> TaskFeatures | None:
         """
         解析任务描述
 
         Args:
             task_description: 任务描述字符串
             format: 输入格式 ("json", "yaml", "qasm", "text")
+            max_input_length: 单个字符串输入允许的最大字符数，默认 100KB。
 
         Returns:
             TaskFeatures对象，解析失败返回None
+
+        Raises:
+            ValueError: 输入超长、含非法控制字符或不支持的格式。
+            TypeError: 输入非字符串。
         """
+        if not isinstance(task_description, str):
+            raise TypeError(
+                f"task_description must be str, got {type(task_description).__name__}"
+            )
+        # 输入安全：长度校验 + 危险控制字符检测（不去除空白，因 QASM/YAML 可能依赖缩进）
+        if len(task_description) > max_input_length:
+            raise ValueError(
+                f"输入长度 {len(task_description)} 超过上限 {max_input_length}（防止滥用/DoS）。"
+            )
+        if _DANGEROUS_CTRL_PATTERN.search(task_description):
+            raise ValueError("输入包含非法控制字符（null 字节或其它控制字符）。")
+
         if format == "json":
             return self._parse_json(task_description)
         elif format == "yaml":
@@ -768,11 +848,22 @@ class LegacyTaskParser:
             logger.error(f"文本解析失败: {e}")
             return None
 
-    def batch_parse(self, task_descriptions: list[str], format: str = "json") -> list[TaskFeatures]:
-        """批量解析任务描述"""
+    def batch_parse(
+        self,
+        task_descriptions: list[str],
+        format: str = "json",
+        max_input_length: int = MAX_INPUT_LENGTH,
+    ) -> list[TaskFeatures]:
+        """批量解析任务描述
+
+        Args:
+            task_descriptions: 任务描述字符串列表。
+            format: 输入格式。
+            max_input_length: 单个字符串输入允许的最大字符数。
+        """
         results = []
         for desc in task_descriptions:
-            result = self.parse(desc, format)
+            result = self.parse(desc, format, max_input_length=max_input_length)
             if result:
                 results.append(result)
         return results

@@ -21,6 +21,8 @@ from typing import Any
 
 import numpy as np
 
+from src.utils.alerts import alert_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -195,6 +197,7 @@ class AsyncAnnealingLoop:
             except Exception as e:
                 # 退火与评估涉及优化器、网络推理、环境交互，异常类型无法穷举，保留宽捕获并记录日志
                 logger.error(f"[退火闭环] 步数 {step}: 退火或评估失败 ({type(e).__name__}: {e})")
+                alert_error("annealing", f"退火或评估失败: {type(e).__name__}: {e}", step=step)
                 continue
 
             delta = new_reward - old_reward
@@ -343,5 +346,7 @@ class AsyncAnnealingLoop:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    print("AsyncAnnealingLoop 模块已加载，请通过 train_with_annealing_loop.py 使用")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     print("AsyncAnnealingLoop 模块已加载，请通过 train_with_annealing_loop.py 使用")

@@ -176,3 +176,38 @@ jobs:
           pip-audit -r requirements.txt \
             --ignore-vuln GHSA-xxxx \
             --desc
+
+  # ---------------------------------------------------------------------------
+  # Job 5: Mutation Testing（mutmut）— 评估测试质量
+  # 仅对核心模块进行变异测试，避免过长的 CI 运行时间
+  # 注：仅在 main 分支推送时运行，PR 中跳过（耗时较长）
+  #     初期 continue-on-error: true，仅收集基线数据
+  # ---------------------------------------------------------------------------
+  mutation-testing:
+    name: "Mutation Testing (mutmut)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: test  # 在测试通过后运行
+    # 仅在 main 分支推送时运行，PR 中跳过（耗时较长）
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install mutmut
+
+      - name: Run mutation testing
+        run: mutmut run
+        continue-on-error: true  # 初期允许失败，仅收集基线数据
+
+      - name: Show mutation results
+        run: mutmut results
+        if: always()

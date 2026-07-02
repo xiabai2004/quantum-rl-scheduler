@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from src.api import get_client, get_cqlib_client
 from src.api.circuit_breaker import CircuitState
 from src.api.mock_client import MockTianyanClient, create_tianyan_client
-from src.api.tianyan_client import TianyanAPIError, TianyanClient
+from src.api.tianyan_client import TianyanAPIError, TianyanClient, mask_token
 from src.api.tianyan_cqlib import (
     CqlibTianyanClient,
     MultiMachineCqlibCoordinator,
@@ -521,10 +521,11 @@ class TestTianyanClientNoCqlibFallback(unittest.TestCase):
     """测试 TianyanClient 在无 cqlib 时的行为（REST 路径已移除，应抛出错误）。"""
 
     def setUp(self):
-        """构造真实模式客户端（无 api_key → _cqlib=None）。"""
+        """构造真实模式客户端（提供 api_key 但强制 _cqlib=None 以测试回退路径）。"""
         env = _env_without("TIANYAN_API_KEY", "TIANYAN_MOCK_MODE", "TIANYAN_MACHINE")
         with patch.dict(os.environ, env, clear=True), patch("src.api.tianyan_client.load_dotenv"):
-            self.client = TianyanClient(api_key="", mock_mode=False)
+            # 提供假 api_key 以通过凭证校验，随后手动置 _cqlib=None 模拟无 cqlib 场景
+            self.client = TianyanClient(api_key="fake-key", mock_mode=False)
         self.client._cqlib = None
 
     def test_authenticate_no_cqlib_returns_false(self):
@@ -1275,6 +1276,206 @@ class TestTianyanClientConfigAndMetrics(unittest.TestCase):
             result = client.list_backends()
         self.assertEqual(result, [{"name": "tianyan_s"}])
         self.assertEqual(call_count["n"], 3)
+
+
+class TestMaskToken(unittest.TestCase):
+    """测试 mask_token 令牌脱敏工具函数（Issue #78）。"""
+
+    def test_mask_token_standard(self):
+        """标准长度令牌应保留首尾各 4 个字符，中间以 * 填充。"""
+        token = "abcd1234wxyz5678"
+        masked = mask_token(token)
+        self.assertEqual(masked, "abcd********5678")
+        # 首尾 4 字符保留
+        self.assertTrue(masked.startswith("abcd"))
+        self.assertTrue(masked.endswith("5678"))
+        # 中间字符全部脱敏
+        self.assertNotIn("1234", masked)
+        self.assertNotIn("wxyz", masked)
+
+    def test_mask_token_preserves_length(self):
+        """脱敏后字符串长度应与原令牌一致。"""
+        token = "sk-my-secret-token-12345678"
+        self.assertEqual(len(mask_token(token)), len(token))
+
+    def test_mask_token_short(self):
+        """短令牌（≤8 字符）应全部以 * 替换，避免泄露任何片段。"""
+        for token in ("a", "ab", "abc", "abcd", "abcde", "abcdef", "abcdefg", "abcdefgh"):
+            masked = mask_token(token)
+            self.assertEqual(masked, "*" * len(token), f"failed for {token!r}")
+            self.assertNotIn(token, masked)
+
+    def test_mask_token_exactly_8_chars(self):
+        """长度恰好 8 的令牌应全部脱敏（边界条件）。"""
+        token = "12345678"
+        self.assertEqual(mask_token(token), "********")
+
+    def test_mask_token_exactly_9_chars(self):
+        """长度 9 的令牌应保留首尾各 4 字符，中间 1 个 *。"""
+        token = "123456789"
+        self.assertEqual(mask_token(token), "1234*6789")
+
+    def test_mask_token_empty(self):
+        """空字符串应原样返回空字符串。"""
+        self.assertEqual(mask_token(""), "")
+
+    def test_mask_token_does_not_leak_middle(self):
+        """脱敏结果不应包含原令牌的中间部分。"""
+        token = "abcdefghijklmn"
+        masked = mask_token(token)
+        # 中间字符 'efghij' 不应出现在脱敏结果中
+        for ch in "efghij":
+            self.assertNotIn(ch, masked)
+
+
+class TestCredentialSecurity(unittest.TestCase):
+    """测试 API 凭证安全管理（Issue #78）。"""
+
+    def test_missing_credentials_raises_error(self):
+        """真实模式下未提供 api_key 且环境变量未配置时应抛出 ValueError。"""
+        env = _env_without(
+            "TIANYAN_API_KEY", "TIANYAN_API_TOKEN", "TIANYAN_MOCK_MODE", "TIANYAN_MACHINE"
+        )
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("src.api.tianyan_client.load_dotenv"),
+            self.assertRaises(ValueError) as ctx,
+        ):
+            TianyanClient(mock_mode=False)
+        # 错误消息应包含环境变量名（中文提示）
+        self.assertIn("TIANYAN_API_KEY", str(ctx.exception))
+        self.assertIn("TIANYAN_API_TOKEN", str(ctx.exception))
+
+    def test_missing_credentials_raises_error_with_env_only(self):
+        """_load_credentials 直接调用时，缺失凭证应抛出 ValueError。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_API_TOKEN")
+        with (
+            patch.dict(os.environ, env, clear=True),
+            self.assertRaises(ValueError) as ctx,
+        ):
+            TianyanClient._load_credentials(api_key=None)
+        self.assertIn("TIANYAN_API_KEY", str(ctx.exception))
+
+    def test_load_credentials_from_explicit_arg(self):
+        """显式传入 api_key 应优先于环境变量。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_API_TOKEN")
+        with patch.dict(os.environ, env, clear=True):
+            creds = TianyanClient._load_credentials(api_key="explicit-key")
+        self.assertEqual(creds["api_key"], "explicit-key")
+
+    def test_load_credentials_from_env(self):
+        """未显式传入时，应从环境变量 TIANYAN_API_KEY 读取。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_API_TOKEN")
+        env["TIANYAN_API_KEY"] = "env-key-12345"
+        with patch.dict(os.environ, env, clear=True):
+            creds = TianyanClient._load_credentials(api_key=None)
+        self.assertEqual(creds["api_key"], "env-key-12345")
+
+    def test_load_credentials_from_alias_env(self):
+        """TIANYAN_API_TOKEN 作为别名应被识别。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_API_TOKEN")
+        env["TIANYAN_API_TOKEN"] = "alias-key-67890"
+        with patch.dict(os.environ, env, clear=True):
+            creds = TianyanClient._load_credentials(api_key=None)
+        self.assertEqual(creds["api_key"], "alias-key-67890")
+
+    def test_load_credentials_explicit_overrides_env(self):
+        """显式传入的 api_key 应优先于环境变量。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_API_TOKEN")
+        env["TIANYAN_API_KEY"] = "env-key"
+        with patch.dict(os.environ, env, clear=True):
+            creds = TianyanClient._load_credentials(api_key="explicit-key")
+        self.assertEqual(creds["api_key"], "explicit-key")
+
+    def test_load_credentials_includes_optional_fields_when_set(self):
+        """设置可选环境变量时，凭证字典应包含对应字段。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_API_TOKEN")
+        env["TIANYAN_API_KEY"] = "key"
+        env["TIANYAN_API_SECRET"] = "secret-val"
+        env["TIANYAN_APP_ID"] = "app-123"
+        with patch.dict(os.environ, env, clear=True):
+            creds = TianyanClient._load_credentials(api_key=None)
+        self.assertEqual(creds["api_key"], "key")
+        self.assertEqual(creds["api_secret"], "secret-val")
+        self.assertEqual(creds["app_id"], "app-123")
+
+    def test_load_credentials_omits_optional_fields_when_unset(self):
+        """未设置可选环境变量时，凭证字典不应包含对应字段。"""
+        env = _env_without(
+            "TIANYAN_API_KEY", "TIANYAN_API_TOKEN", "TIANYAN_API_SECRET", "TIANYAN_APP_ID"
+        )
+        env["TIANYAN_API_KEY"] = "key"
+        with patch.dict(os.environ, env, clear=True):
+            creds = TianyanClient._load_credentials(api_key=None)
+        self.assertNotIn("api_secret", creds)
+        self.assertNotIn("app_id", creds)
+
+    def test_credentials_not_logged(self):
+        """验证令牌明文不会出现在日志输出中。"""
+        from loguru import logger
+
+        test_token = "sk-super-secret-token-1234567890abcdef"
+        logs: list[str] = []
+
+        def capture_sink(message: object) -> None:
+            logs.append(str(message))
+
+        logger_id = logger.add(capture_sink, level="DEBUG")
+        try:
+            env = _env_without("TIANYAN_API_KEY", "TIANYAN_API_TOKEN", "TIANYAN_MOCK_MODE")
+            env["TIANYAN_API_KEY"] = test_token
+            with (
+                patch.dict(os.environ, env, clear=True),
+                patch("src.api.tianyan_client.load_dotenv"),
+            ):
+                TianyanClient(mock_mode=False)
+        finally:
+            logger.remove(logger_id)
+
+        # 完整令牌明文不应出现在任何日志行中
+        for log_line in logs:
+            self.assertNotIn(test_token, log_line, "令牌明文泄露到日志中")
+        # 但脱敏后的令牌应出现（证明凭证已加载且日志脱敏生效）
+        masked_appeared = any(mask_token(test_token) in line for line in logs)
+        self.assertTrue(masked_appeared, "脱敏后的令牌应出现在日志中以证明凭证已加载")
+
+    def test_credentials_not_logged_with_explicit_key(self):
+        """显式传入的 api_key 明文同样不应出现在日志中。"""
+        from loguru import logger
+
+        test_token = "explicit-secret-key-xyz-9876543210"
+        logs: list[str] = []
+
+        def capture_sink(message: object) -> None:
+            logs.append(str(message))
+
+        logger_id = logger.add(capture_sink, level="DEBUG")
+        try:
+            env = _env_without("TIANYAN_API_KEY", "TIANYAN_API_TOKEN", "TIANYAN_MOCK_MODE")
+            with (
+                patch.dict(os.environ, env, clear=True),
+                patch("src.api.tianyan_client.load_dotenv"),
+            ):
+                TianyanClient(api_key=test_token, mock_mode=False)
+        finally:
+            logger.remove(logger_id)
+
+        for log_line in logs:
+            self.assertNotIn(test_token, log_line, "令牌明文泄露到日志中")
+
+    def test_mock_mode_does_not_require_credentials(self):
+        """Mock 模式下不应调用 _load_credentials，无需凭证。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_API_TOKEN", "TIANYAN_MOCK_MODE")
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("src.api.tianyan_client.load_dotenv"),
+            patch.object(
+                TianyanClient, "_load_credentials", side_effect=AssertionError("不应调用")
+            ) as mock_load,
+        ):
+            client = TianyanClient(mock_mode=True)
+        mock_load.assert_not_called()
+        self.assertTrue(client.mock_mode)
 
 
 if __name__ == "__main__":

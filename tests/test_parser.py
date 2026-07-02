@@ -21,18 +21,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.scheduler.parser import (
     MAX_CIRCUIT_DEPTH,
+    MAX_INPUT_LENGTH,
     MAX_QUBITS,
     MAX_SHOTS,
     PRIORITY_MAP,
     PRIORITY_REVERSE,
     LegacyTaskParser,
-)
-from src.scheduler.parser import Task as ParserTask
-from src.scheduler.parser import (
     TaskBuilder,
     TaskFeatures,
     TaskParser,
 )
+from src.scheduler.parser import Task as ParserTask
 
 # ============================================================
 # Task 数据类
@@ -635,6 +634,127 @@ class TestTaskParser(unittest.TestCase):
             )
             internal = self.parser.to_internal_format(task)
             self.assertEqual(internal["priority_label"], label)
+
+
+# ============================================================
+# 输入验证与 sanitization
+# ============================================================
+
+
+class TestInputSanitization(unittest.TestCase):
+    """测试 TaskParser / LegacyTaskParser 的输入安全与清理。"""
+
+    def setUp(self):
+        self.parser = TaskParser()
+        self.legacy = LegacyTaskParser()
+        self.base = {
+            "task_id": "task_001",
+            "type": "quantum",
+            "algorithm": "VQE",
+            "qubits_required": 8,
+            "circuit_depth": 50,
+            "shots": 1024,
+            "estimated_time": 120,
+            "priority": "high",
+        }
+
+    # ---- TaskParser.parse ----
+
+    def test_parse_oversized_input(self):
+        """超过 max_input_length 的字符串字段应被拒绝。"""
+        big = "x" * 200
+        with self.assertRaises(ValueError):
+            self.parser.parse(dict(self.base, task_id=big), max_input_length=100)
+
+    def test_parse_oversized_input_default_limit(self):
+        """超过默认 MAX_INPUT_LENGTH 的输入应被拒绝。"""
+        huge = "x" * (MAX_INPUT_LENGTH + 1)
+        with self.assertRaises(ValueError):
+            self.parser.parse(dict(self.base, task_id=huge))
+
+    def test_parse_strips_whitespace(self):
+        """字符串字段首尾空白应被去除。"""
+        task = self.parser.parse(
+            dict(self.base, task_id="  task_001  ", algorithm="  VQE  ")
+        )
+        self.assertEqual(task.task_id, "task_001")
+        self.assertEqual(task.algorithm, "VQE")
+
+    def test_parse_strips_whitespace_type_field(self):
+        """task_type 字段首尾空白应被去除。"""
+        task = self.parser.parse(dict(self.base, type="  quantum  "))
+        self.assertEqual(task.task_type, "quantum")
+
+    def test_parse_strips_whitespace_status_field(self):
+        """status 字段首尾空白应被去除。"""
+        task = self.parser.parse(dict(self.base, status="  queued  "))
+        self.assertEqual(task.status, "queued")
+
+    def test_parse_rejects_null_byte_in_task_id(self):
+        """task_id 含 null 字节应被拒绝。"""
+        with self.assertRaises(ValueError):
+            self.parser.parse(dict(self.base, task_id="task\x00_001"))
+
+    def test_parse_rejects_control_chars_in_algorithm(self):
+        """algorithm 含控制字符应被拒绝。"""
+        with self.assertRaises(ValueError):
+            self.parser.parse(dict(self.base, algorithm="VQ\x01E"))
+
+    def test_parse_allows_normal_input(self):
+        """正常输入应通过安全校验。"""
+        task = self.parser.parse(self.base)
+        self.assertEqual(task.task_id, "task_001")
+        self.assertEqual(task.algorithm, "VQE")
+
+    # ---- LegacyTaskParser.parse ----
+
+    def test_legacy_parse_oversized_input(self):
+        """LegacyTaskParser 超长输入应被拒绝。"""
+        big = "x" * 200
+        with self.assertRaises(ValueError):
+            self.legacy.parse(big, format="json", max_input_length=100)
+
+    def test_legacy_parse_oversized_default_limit(self):
+        """LegacyTaskParser 超过默认上限的输入应被拒绝。"""
+        huge = "x" * (MAX_INPUT_LENGTH + 1)
+        with self.assertRaises(ValueError):
+            self.legacy.parse(huge, format="json")
+
+    def test_legacy_parse_rejects_null_byte(self):
+        """LegacyTaskParser 含 null 字节的输入应被拒绝。"""
+        with self.assertRaises(ValueError):
+            self.legacy.parse('{"task_id": "t\x00"}', format="json")
+
+    def test_legacy_parse_rejects_control_chars(self):
+        """LegacyTaskParser 含其它控制字符的输入应被拒绝。"""
+        with self.assertRaises(ValueError):
+            self.legacy.parse("qreg q[2]\x01;", format="qasm")
+
+    def test_legacy_parse_non_string_raises_type_error(self):
+        """LegacyTaskParser 非字符串输入应抛出 TypeError。"""
+        with self.assertRaises(TypeError):
+            self.legacy.parse(12345, format="json")  # type: ignore[arg-type]
+
+    def test_legacy_parse_normal_json_still_works(self):
+        """正常 JSON 输入应通过安全校验。"""
+        s = '{"task_id":"t1","task_type":"quantum","qubit_count":10}'
+        f = self.legacy.parse(s, format="json")
+        self.assertIsNotNone(f)
+        self.assertEqual(f.task_id, "t1")
+
+    def test_legacy_parse_normal_qasm_still_works(self):
+        """正常 QASM 输入应通过安全校验。"""
+        qasm = "qreg q[2];\nh q[0];\nmeasure q[0] -> c[0];"
+        f = self.legacy.parse(qasm, format="qasm")
+        self.assertIsNotNone(f)
+        self.assertEqual(f.qubit_count, 2)
+
+    def test_legacy_batch_parse_oversized_rejected(self):
+        """batch_parse 中超长项应抛出 ValueError（不静默过滤）。"""
+        big = "x" * 200
+        descs = ['{"task_id":"t1"}', big]
+        with self.assertRaises(ValueError):
+            self.legacy.batch_parse(descs, format="json", max_input_length=100)
 
 
 # ============================================================

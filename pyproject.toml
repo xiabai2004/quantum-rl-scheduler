@@ -247,7 +247,20 @@ insert_final_newline = true
 # mutmut 配置 — Mutation Testing
 # =============================================================================
 [tool.mutmut]
-source_paths = ["src"]
-test_command = "python -m pytest tests/ --no-cov -x"
-runner = "pytest"
-target = 80
+# Mutation Testing 配置 — 使用 mutmut 评估测试质量
+# 仅对核心模块进行变异测试，避免过长的 CI 运行时间
+paths_to_mutate = [
+    "src/scheduler/env.py",
+    "src/scheduler/parser.py",
+    "src/api/circuit_breaker.py",
+    "src/utils/helpers.py",
+    "src/utils/seeds.py",
+]
+# 测试命令
+tests_dir = "tests/"
+# 运行测试的命令（仅运行相关测试以加速）
+runner_command = "python -m pytest tests/test_scheduler.py tests/test_parser.py tests/test_api.py tests/test_helpers.py tests/test_seeds.py -x -q --timeout=30"
+# 并行工作进程数
+workers = 4
+# 排除的变异类型（避免不实用的变异）
+# 参见 mutmut 文档
