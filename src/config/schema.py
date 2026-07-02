@@ -115,7 +115,7 @@ class WebConfig(BaseModel):
     """Web 服务配置。"""
 
     debug: bool = Field(default=False, description="调试模式")
-    host: str = Field(default="0.0.0.0", description="绑定地址")
+    host: str = Field(default="0.0.0.0", description="绑定地址")  # nosec B104: demo/dev
     port: int = Field(default=8000, ge=1, le=65535, description="绑定端口")
 
 
