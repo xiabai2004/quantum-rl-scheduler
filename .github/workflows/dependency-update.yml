@@ -32,7 +32,7 @@ jobs:
           diff requirements.lock requirements.lock.new || echo "Updates available"
 
       - name: Upload results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dependency-check-results
           path: |
