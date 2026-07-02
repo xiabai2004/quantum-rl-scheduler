@@ -228,7 +228,7 @@ exclude_lines = [
     "class .*\\bProtocol\\):",
     "@(abc\\.)?abstractmethod",
 ]
-fail_under = 40
+fail_under = 60
 show_missing = true
 skip_empty = true
 
@@ -247,7 +247,7 @@ insert_final_newline = true
 # mutmut 配置 — Mutation Testing
 # =============================================================================
 [tool.mutmut]
-paths_to_mutate = ["src"]
+source_paths = ["src"]
 test_command = "python -m pytest tests/ --no-cov -x"
 runner = "pytest"
 target = 80

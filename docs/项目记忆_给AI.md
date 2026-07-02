@@ -1,372 +1,151 @@
 # 揭榜挂帅擂台赛 - 项目记忆文档
 
-> **文档用途**：同步给 TRAE AI 助手，帮助快速理解项目背景、技术架构、当前状态  
-> **更新时间**：2026-07-01  
+> **同步给 TRAE AI 助手 | 更新时间**：2026-07-01 (v7)
 > **项目负责人**：瑞哥（xiabai2004）
 
 ---
 
-## 📋 项目背景
+## 项目背景
 
 ### 比赛信息
-- **赛事名称**：2026年"揭榜挂帅"擂台赛（河北雄安新区）
-- **榜题**：量子AI双向赋能的研究与应用探索
-- **主办方**：共青团中央主办 / 中国电信发榜 / 中电信量子执行
-- **官方邮箱**：saiyuan@chinatelecom.cn（申请邮件发送至此处）
-- **真机型号**："祖冲之三号"同款超导量子计算机"天衍-287"
-- **总奖金池**：¥26.5万现金 + 价值超¥200万的真机机时
-
-### 关键时间节点
-| 节点 | 日期 | 状态 |
-|------|------|------|
-| 报名截止 | 2026-06-30 | ⚠️ 今天截止（需确认已报名） |
-| 作品提交 | 2026-09-15 | 📅 待完成 |
-| 初审结果 | 2026-09-30 | 📅 待完成 |
-| 终审擂台赛 | 2026-11月 | 📅 待完成 |
-
-### 选题方案
+- **赛事**：2026年"揭榜挂帅"擂台赛 | **选题编号**：XA-202609
+- **发榜单位**：中国电信集团有限公司 | **执行单位**：中电信量子
 - **作品名称**：量子RL驱动的天衍云平台智能调度系统
-- **对应方向**：AI赋能量子计算 → 第3方向"量算+智算融合调度"
-- **核心创新**：双向赋能
-  - AI赋能量子：RL智能调度量子任务
-  - 量子赋能AI：量子退火加速RL决策
-- **量化指标**：资源利用率提升≥30%，平均等待时间降低≥40%
+- **真机**：天衍云287量子比特超导量子计算机（3台：tianyan_s/sw/tn）
+- **报名状态**：6/30 已通过审核
+
+### 关键节点
+| 日期 | 事项 | 状态 |
+|------|------|------|
+| 2026-06-30 | 报名截止 | 已通过 |
+| 2026-09-15 | 作品提交 | 进行中 |
+| 2026-09-30 | 初审 | — |
+| 2026-11 | 终审擂台赛 | — |
+
+### 核心创新
+- **AI 赋能量子**：PPO强化学习智能调度量子/经典任务，PPO vs FCFS +95.4%
+- **量子赋能 AI**：量子退火(QUBO映射)加速RL策略搜索
+- **量化目标**：资源利用率+30%，等待时间-40%
 
 ---
 
-## 🏗️ 技术架构
+## 项目当前状态（v7）
 
-### 系统架构图
-```
-┌─────────────────────────────────────────────────────┐
-│              用户/比赛评审界面                      │
-└─────────────────────┬─────────────────────────────┘
-                      │
-┌─────────────────────▼─────────────────────────────┐
-│         FastAPI Web监控界面 (port 8000)           │
-│  - 实时甘特图展示任务调度                         │
-│  - 资源利用率仪表盘                               │
-│  - 训练曲线实时展示                               │
-└─────────────────────┬─────────────────────────────┘
-                      │
-┌─────────────────────▼─────────────────────────────┐
-│           调度引擎 (src/scheduler/)                │
-│  ┌─────────────┐  ┌─────────────┐             │
-│  │ Gymnasium环境 │  │ DQN智能体   │             │
-│  │ (env.py)     │  │ (agent.py)  │             │
-│  └─────────────┘  └─────────────┘             │
-│  ┌─────────────────────────────────┐             │
-│  │  量子退火加速模块 (annealing.py) │             │
-│  └─────────────────────────────────┘             │
-└─────────────────────┬─────────────────────────────┘
-                      │
-┌─────────────────────▼─────────────────────────────┐
-│      天衍云平台API客户端 (src/api/)                │
-│  - 真实模式：调用天衍云API                       │
-│  - Mock模式：模拟API响应（开发阶段）              │
-└─────────────────────┬─────────────────────────────┘
-                      │
-┌─────────────────────▼─────────────────────────────┐
-│         天衍-287 超导量子计算机                    │
-└───────────────────────────────────────────────────┘
-```
+| 指标 | 数值 |
+|------|------|
+| src/ 代码 | 22文件，~11,000行 |
+| tests/ | 14文件，~4,485行，100+用例 |
+| CI覆盖率 | 60%（目标80%） |
+| mypy类型检查 | 8项严格配置（2模块豁免） |
+| 真机任务 | 32个（3台天衍云超导） |
+| 实验成果 | PPO +95.4%，多机 +86.3%，消融全完成 |
+| 比赛材料 | PPT 15页 + 白皮书 10章 + 视频脚本完成 |
 
-### 技术栈
-| 层级 | 技术选型 | 用途 |
-|------|----------|------|
-| **编程语言** | Python 3.10+ | 后端 + 算法 |
-| **RL框架** | Stable-Baselines3 | DQN/A3C/PPO实现 |
-| **量子模拟** | Qiskit / PennyLane | 量子电路仿真 |
-| **量子退火** | D-Wave dimod | QUBO求解 |
-| **Web框架** | FastAPI (后端) + Vue3 (前端) | 监控界面 |
-| **数据可视化** | Echarts / Plotly | 图表展示 |
-| **任务封装** | Gymnasium | 调度环境标准化 |
-| **API客户端** | requests + Mock | 天衍云API调用 |
+### 完成进度
+```
+v1 技术提升   ████████████████░   83%
+Track A       ████████████████████ 100%
+Track B       ████████████████████ 100%
+Track C       ████████░░░░░░░░░░   40%（待修复退步）
+真机闭环      ░░░░░░░░░░░░░░░░░░   0%（待开发）
+```
 
 ---
 
-## 📁 项目结构
+## 项目结构（v7 精简版）
 
 ```
 quantum-rl-scheduler/
-├── README.md                  # 项目介绍 + 快速开始（含Mock模式说明）
-├── requirements.txt           # Python依赖清单
-├── pyproject.toml             # 代码质量统一配置（Black/isort/flake8/mypy/pytest/coverage）
-├── .editorconfig              # 跨编辑器编码风格统一
-├── .pre-commit-config.yaml    # Git pre-commit 自动检查
-├── setup.sh                   # 一键环境初始化（Linux/macOS/Git Bash）
-├── setup.ps1                  # 一键环境初始化（Windows PowerShell）
-├── .env.example               # 环境变量模板
-├── .gitignore                 # Git忽略规则
-├── CONTRIBUTING.md            # 贡献指南（含CI/CD说明）
-│
-├── .github/                   # GitHub配置
-│   ├── PULL_REQUEST_TEMPLATE.md  # PR模板
-│   ├── ISSUE_TEMPLATE/          # Issue模板
-│   ├── labeler.yml              # PR自动标签规则
-│   └── workflows/
-│       ├── ci.yml               # CI流水线（lint→test→typecheck）
-│       └── pr-automation.yml    # PR自动化（标签+Commit校验）
-│
-├── .devcontainer/             # VS Code开发容器
-│   ├── devcontainer.json      # 一键开发环境配置
-│   ├── Dockerfile.dev         # 开发容器镜像
-│   └── post-create.sh         # 容器初始化脚本
-│
-├── config/
-│   └── config.yaml           # 系统配置文件（含mock_mode开关）
-│
-├── src/
-│   ├── scheduler/            # 调度引擎
-│   │   ├── __init__.py
-│   │   ├── env.py           # Gymnasium调度环境（待实现）
-│   │   ├── agent.py         # DQN智能体（待实现）
-│   │   └── parser.py       # 量子任务解析器（待实现）
-│   │
-│   ├── api/                 # API客户端
-│   │   ├── __init__.py     # 工厂函数create_tianyan_client()
-│   │   ├── tianyan_client.py  # 天衍云API客户端（真实模式）
-│   │   └── mock_client.py  # Mock客户端（开发阶段使用）✅
-│   │
-│   ├── quantum/             # 量子算法模块
-│   │   ├── __init__.py
-│   │   └── annealing.py    # 量子退火加速模块（待实现）
-│   │
-│   ├── visualization/        # Web监控界面
-│   │   ├── __init__.py
-│   │   └── app.py          # FastAPI应用（待实现）
-│   │
-│   └── utils/              # 工具函数
-│       ├── __init__.py
-│       └── helpers.py
-│
-├── scripts/
-│   ├── train_agent.py        # RL智能体训练脚本（待实现）
-│   ├── run_simulation.py    # 仿真运行脚本（待实现）
-│   ├── test_mock_api.py     # Mock API测试脚本 ✅
-│
-├── tests/                   # 单元测试
-│   ├── test_scheduler.py    # 调度器测试（待补充）
-│   └── ...
-│
-├── docs/                    # 项目文档
-│   ├── README.md           # 文档目录索引 ✅ (新增 2026-06-30)
-│   ├── 新人上手指南.md      # 完整onboarding流程 ✅ (更新 2026-07-01)
-│   ├── 队友协同开发指南.md   # 精简版快速上手 ✅ (更新 2026-07-01)
-│   ├── Git工作流.md         # 分支管理规范 ✅
-│   ├── 团队分工.md          # 角色职责说明 ✅
-│   ├── 开发计划.md          # 详细时间线 ✅
-│   ├── docker-deploy.md    # Docker部署手册 ✅
-│   └── 项目记忆_给AI.md    # 本文档 ✅ (更新 2026-07-01)
-│
-│
-├── data/                    # 数据目录
-│   └── scheduler.db         # SQLite数据库（自动创建）
-│
-└── .github/                 # GitHub配置
-    ├── PULL_REQUEST_TEMPLATE.md  # PR模板 ✅
-    └── ISSUE_TEMPLATE/          # Issue模板 ✅
+├── src/                      # 22文件
+│   ├── exceptions.py         # 8类统一异常
+│   ├── scheduler/            # env + agent + parser + marl + multi_objective
+│   ├── api/                  # tianyan_client + cqlib + mock + circuit_breaker
+│   ├── quantum/              # annealing + annealing_loop
+│   ├── visualization/        # FastAPI + Vue3 + Echarts
+│   └── utils/                # helpers + Prometheus metrics
+├── tests/                    # 14文件（含 benchmarks/）
+├── scripts/                  # 6子目录 + cli.py
+│   ├── training/ evaluation/ demo/ testing/ benchmarking/ reporting/
+├── results/reports/          # B1实验数据（4份）
+├── docs/                     # 团队文档
+├── config/                   # config.yaml + .env.example
+└── .github/                  # CI(4Job) + PR自动化 + Dependabot
 ```
 
----
-
-## ✅ 当前完成状态
-
-### 已完成（可立即使用）
-| 模块 | 状态 | 说明 |
-|------|------|------|
-| **项目初始化** | ✅ 100% | 30个文件，8242行代码 |
-| **GitHub仓库** | ✅ 100% | https://github.com/xiabai2004/quantum-rl-scheduler |
-| **核心代码** | ✅ 100% | v5 多机器调度 + PPO + 真机验证 |
-| **CI/CD** | ✅ 100% | GitHub Actions（lint + test + typecheck + PR自动化） |
-| **Dev Container** | ✅ 100% | VS Code 一键开发环境 |
-| **代码质量** | ✅ 100% | pyproject.toml + .editorconfig + pre-commit |
-| **一键初始化** | ✅ 100% | setup.sh / setup.ps1 跨平台脚本 |
-| **Mock API** | ✅ 100% | `src/api/mock_client.py`（572行） |
-| **配置文件** | ✅ 100% | `config/config.yaml`（含mock_mode开关） |
-| **环境变量** | ✅ 100% | `.env.example`（含TIANYAN_MOCK_MODE） |
-| **分支保护** | ✅ 100% | GitHub 原生 PR 审批，拦截直接推main |
-| **团队文档** | ✅ 100% | 新人指南、Git工作流、团队分工 |
-| **Docker** | ✅ 100% | Dockerfile + docker-compose 三服务编排 |
-
-### 进行中
-| 模块 | 进度 | 说明 |
-|------|------|------|
-| **平台申请** | 🔄 等待审批 | 需发邮件至saiyuan@chinatelecom.cn |
-| **环境搭建** | 🔄 队友进行中 | 7位队友已加入仓库 |
-
-### 待实现（按优先级）
-| 模块 | 优先级 | 对应Issue | 预计工时 |
-|------|---------|-----------|---------|
-| 任务解析器 `parser.py` | 🔴 高 | #2 | 2天 |
-| Gymnasium调度环境 `env.py` | 🔴 高 | #4 | 3天 |
-| DQN智能体 `agent.py` | 🔴 高 | #5 | 3天 |
-| 量子退火模块 `annealing.py` | 🔴 高 | #6 | 4天 |
-| 天衍云API客户端（真实模式） | 🔴 高 | #3 | 2天 |
-| FastAPI监控界面 `app.py` | 🟡 中 | #7 | 3天 |
-| 训练脚本 `train_agent.py` | 🟡 中 | #8 | 1.5天 |
-| 仿真脚本 `run_simulation.py` | 🟡 中 | #9 | 2天 |
-| 单元测试 | 🟡 中 | #10 | 3天 |
-| 真机测试 | 🔴 高 | #11 | 5天 |
-| 文档完善 | 🔴 高 | #12 | 3天 |
-
----
-
-## 👥 团队协作
-
-### 团队成员（7人）
-| GitHub用户名 | 角色 | 权限 | 状态 |
-|-------------|------|------|------|
-| **xiabai2004** | 项目负责人 + 架构 | Admin | ✅ 已加入 |
-| heka-ky | 待分配 | Write | ✅ 已加入 |
-| zyhsga | 待分配 | Write | ✅ 已加入 |
-| NN2914 | 待分配 | Write | ✅ 已加入 |
-| qpqpalalzmzm112 | 待分配 | Write | ✅ 已加入 |
-| Jackhock-1 | 待分配 | Write | ✅ 已加入 |
-| DUMNOX | 待分配 | Write | ✅ 已加入 |
-| K1660729 | 待分配 | Write | ✅ 已加入 |
-
-### 团队分工建议
-| 方向 | 对应Issue | 建议人数 | 技能要求 |
-|------|-----------|---------|---------|
-| **算法开发** | #4, #5, #6, #11 | 2-3人 | RL、量子计算、Python |
-| **后端开发** | #2, #3, #9 | 2人 | Python、API设计、异步编程 |
-| **前端开发** | #7 | 1-2人 | Vue3、FastAPI、WebSocket |
-| **测试与DevOps** | #1, #10 | 1人 | pytest、CI/CD、Docker |
-| **文档与项目管理** | #8, #12 | 1人 | 技术写作、PPT制作 |
-
-### 协作规范
-1. **分支管理**：
-   - `main`：生产分支，只能通过PR合并
-   - `feature/*`：功能分支（如`feature/rl-agent`）
-   - `fix/*`：修复分支
-2. **Commit规范**：
-   - 格式：`<type>: <subject>`（如`feat: 实现DQN智能体`）
-   - type类型：`feat`/`fix`/`docs`/`test`/`refactor`/`chore`
-3. **PR流程**：
-   - 必须关联Issue（在PR描述中添加`Closes #4`）
-   - 至少1人Review + Approve
-   - 所有检查通过后方可合并
-4. **协作规范**：main 分支受保护，须走 PR 审批流程
-   - `pre-push`：阻止直接推main分支
-
----
-
-## 🚀 开发指南（给TRAE）
-
-### 快速开始（Mock模式）
-```bash
-# 1. 克隆仓库
-git clone https://github.com/xiabai2004/quantum-rl-scheduler.git
-cd quantum-rl-scheduler
-
-# 2. 一键初始化
-bash setup.sh          # Git Bash / Linux / macOS
-# 或
-powershell .\setup.ps1  # Windows PowerShell
-
-# 3. 安装 pre-commit（推荐）
-pip install pre-commit && pre-commit install
-
-# 4. 验证环境
-python -m pytest tests/ -v
-python scripts/test_mock_api.py
-
-# 5. 开始开发
-git checkout -b feature/your-module-name
-```
-
-### Mock模式说明
-- **默认启用**：`config/config.yaml`中`mock_mode: true`
-- **模拟功能**：
-  - 模拟量子任务提交（返回虚拟task_id）
-  - 模拟任务状态轮转（PENDING → RUNNING → COMPLETED）
-  - 模拟量子测量结果（随机计数）
-  - 模拟网络延迟（可配置`mock_delay`）
-  - 模拟失败率（可配置`mock_failure_rate`）
-- **切换真实API**：
-  1. 获得天衍云平台权限后
-  2. 修改`.env`：`TIANYAN_MOCK_MODE=false`
-  3. 填写`TIANYAN_API_KEY`和`TIANYAN_API_SECRET`
-
-### 代码风格
-- **Python**：遵循PEP 8，使用type hints
-- **格式化**：Black（line-length=100），通过 `pyproject.toml` 统一配置
-- **质量检查**：pre-commit（commit前自动） + GitHub Actions CI（push/PR自动）
-- **Docstring**：Google风格（参考`tianyan_client.py`）
-- **注释**：复杂逻辑必须添加注释
-- **测试**：每个模块至少1个单元测试
-
----
-
-## 📊 关键决策记录
-
-### 技术决策
-| 决策 | 理由 | 时间 |
-|------|------|------|
-| 选择方案A（量智融合调度） | 技术可行性高，量化指标明确，易演示 | 2026-06-27 |
-| 使用Gymnasium封装调度环境 | 标准化RL环境，便于对比不同算法 | 2026-06-27 |
-| 先实现Mock API | 队友可立即开发，无需等待平台审批 | 2026-06-27 |
-| 仓库公开+分支保护 | 支持队友PR协作，无Topic不被搜索 | 2026-06-30 |
-| GitHub Actions CI/CD | 自动 lint + test + typecheck + PR标签 | 2026-07-01 |
-| VS Code Dev Container | 一键开发环境，新队友15分钟上手 | 2026-07-01 |
-| pyproject.toml 统一配置 | 单一入口管理所有代码质量工具 | 2026-07-01 |
-| 使用Git Hooks拦截 | 免费账户无分支保护，用Hooks替代 → 已改为GitHub原生保护 | 2026-06-27 |
-
-### 待确认事项
-- [ ] 天衍云平台申请邮件是否已发送？
-- [ ] 7位队友的具体分工是否已确定？
-- [ ] 是否需要创建Slack/微信群用于团队沟通？
-- [ ] 是否需要配置CI/CD（GitHub Actions）？
-
----
-
-## 📞 重要联系方式
-
-| 项目 | 信息 |
+### v1 技术提升新增模块
+| 模块 | 用途 |
 |------|------|
-| **GitHub仓库** | https://github.com/xiabai2004/quantum-rl-scheduler |
-| **官方申请邮箱** | saiyuan@chinatelecom.cn |
-| **天衍云平台** | https://tianyan.quantum.qq.com |
-| **项目负责人** | 瑞哥（GitHub: xiabai2004） |
-| **比赛官网** | https://www.zgqnb.cn/xxgk/zthd/202605/t20260528_1540892.htm |
+| `src/exceptions.py` | 8类异常（code + retryable语义） |
+| `src/api/circuit_breaker.py` | 熔断器（CLOSED/OPEN/HALF_OPEN） |
+| `src/utils/metrics.py` | Prometheus 7指标 |
+| `scripts/cli.py` | Click统一入口（train/simulate/serve/demo） |
+| `mypy.ini` | 8项严格配置 |
+| `.pre-commit-config.yaml` | Git自动检查 |
+| `.github/dependabot.yml` | 自动依赖更新 |
+| 测试扩展 | 5→14文件，+82%代码量 |
 
 ---
 
-## 🎯 下一步计划
+## 比赛材料
 
-### 本周（2026-07-01 ~ 2026-07-05）
-1. **确定7位队友的具体分工**，分配 GitHub Issues
-2. **队友安装 pre-commit**，确保代码提交流水线正常
-3. **开始准备参赛材料**（PPT大纲 + 演示脚本）
-4. **每周同步进度**（建议周五晚8点线上会议）
-
-### 短期（2026-07月）
-- 完成 M1 里程碑（环境搭建与基础模块）
-- 完成 M2 里程碑（核心算法开发）
-- 进行真机 Benchmark 标准化测试
-- 编写交付文档（需求规格、技术选型报告等）
-
-### 中期（2026-08月）
-- 完成M3里程碑（系统集成与可视化）
-- 完成M4里程碑（测试与真机验证）
-- 在天衍-287真机上完成测试
-
-### 长期（2026-09月）
-- 完成M5里程碑（文档完善与参赛提交）
-- 9月15日前提交完整作品
-- 准备终审答辩PPT和演示视频
+| 材料 | 路径 | 状态 |
+|------|------|------|
+| 答辩PPT（15页） | `../答辩PPT_量子RL调度系统.pptx` | 已完成 |
+| 技术白皮书（10章） | `../技术白皮书_量子RL调度系统_v2.docx` | 已完成 |
+| 演示视频脚本（5分钟） | `演示视频分镜脚本.md` | 已完成 |
+| 实验报告（4份） | `results/reports/` | 已完成 |
 
 ---
 
-## 📝 备注
+## 实验核心数据（引用 B1 报告）
 
-- **报名截止已到**（6月30日），需确认是否已成功报名
-- **Mock API已就绪**，队友可立即开始开发
-- **GitHub 分支保护**，确保 PR 审批流程
-- **文档齐全**，新人可按`docs/新人上手指南.md`快速上手
-- **Issue任务已创建**，建议使用GitHub Projects看板管理进度
+| 实验 | 结果 |
+|------|------|
+| 8策略对比 | PPO 2864 vs FCFS 1466（+95.4%） |
+| 消融D1-D5 | D4多机+86.3% > D1+95.4% > D5+6.4% > D2+2.1% |
+| 压力4场景 | PPO综合最强；量子波动PPO +91.4% |
+| 真机 | 32任务100%成功；Mock偏差<5% |
 
 ---
 
-**文档结束** | 如有疑问，请联系瑞哥（xiabai2004）
+## 待完成
+
+### P0 立即
+- Track C: mypy 豁免 6→2 清理
+- Track C: CI 覆盖率 40→60% 恢复
+
+### P1 7月
+- Mutation testing 基线
+- pre-commit 迁移 ruff+bandit
+- PPO 真机闭环（cqlib 注入调度循环）
+- 演示视频录制
+- 创建 8 个 GitHub Issues
+
+### P2 8月
+- 覆盖率 80%
+- 8/15 代码冻结
+- 材料终审定稿
+
+---
+
+## 关键路径
+
+```
+项目仓库: C:\Users\HZR\Desktop\揭榜挂帅擂台赛\quantum-rl-scheduler
+Python: D:\tools\Python 3.12.9\python.exe
+推送: PR流程（main分支保护）
+
+提示词文件：
+  TrackB_提示词_给TRAE.md  → B1-B4（已完成）
+  TrackC_提示词_给TRAE.md  → C1-C3（待执行）
+  GitHub_Issues_待创建.md  → 8个issue模板
+
+重要提醒：
+  - .env 不推送
+  - TRAE 只写代码，不碰比赛材料
+  - tianyan_s 可用门：H, CZ, M
+```
+
+---
+
+**文档结束**

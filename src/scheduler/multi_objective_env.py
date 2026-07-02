@@ -239,7 +239,7 @@ class MultiObjectiveRewardWrapper(gym.Wrapper):
         # 判断本步是否成功调度了任务
         # 通过检查 info 中的统计变化来判断
         scheduled = 0.0
-        env = self.env.unwrapped
+        env: QuantumSchedulingEnv = self.env.unwrapped  # type: ignore[assignment]
 
         # 检查本步是否有调度动作且兼容
         if env._current_task is not None or env._total_scheduled > 0:  # noqa: SIM102
@@ -261,7 +261,7 @@ class MultiObjectiveRewardWrapper(gym.Wrapper):
         Returns:
             float: 平衡度目标值 [-1, 0]
         """
-        env = self.env.unwrapped
+        env: QuantumSchedulingEnv = self.env.unwrapped  # type: ignore[assignment]
         quantum_util = env._quantum.available_ratio  # 量子可用比率（越高越空闲）
         classical_util = env._classical.load  # 经典负载（越高越忙）
 
@@ -280,7 +280,9 @@ class MultiObjectiveRewardWrapper(gym.Wrapper):
         Returns:
             float: 服务质量目标值 [-1, 0]
         """
-        env = self.env.unwrapped
+        from src.scheduler.env import QuantumSchedulingEnv
+
+        env: QuantumSchedulingEnv = self.env.unwrapped  # type: ignore[assignment]
         if not env._task_queue:
             return 0.0
 
