@@ -12,6 +12,7 @@ __all__ = [
     "ConfigurationError",
     "QuantumAnnealingError",
     "QuantumSchedulerError",
+    "RateLimitError",
     "ResourceExhaustedError",
     "SchedulingError",
     "TaskParseError",
@@ -84,3 +85,29 @@ class ResourceExhaustedError(QuantumSchedulerError):
 
     用于量子比特、机器队列、连接池等资源耗尽，无法接受新任务的场景。
     """
+
+
+class RateLimitError(QuantumSchedulerError):
+    """API 限流错误
+
+    当天衍云平台返回 429 Too Many Requests 或本地令牌桶限流触发时抛出。
+    该异常默认可重试（``retryable=True``），且不计入熔断器失败计数，
+    以避免限流导致的连续失败误触发熔断。
+
+    Args:
+        message: 异常描述信息
+        code: 错误码（关键字参数，默认 "RATE_LIMIT"）
+        retryable: 该异常是否可重试（关键字参数，默认 True）
+        retry_after: 服务端建议的等待时间（秒），若响应中包含则透传
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "RATE_LIMIT",
+        retryable: bool = True,
+        retry_after: float | None = None,
+    ) -> None:
+        self.retry_after = retry_after
+        super().__init__(message, code=code, retryable=retryable)

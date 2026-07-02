@@ -30,13 +30,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from src.api import get_client, get_cqlib_client
 from src.api.circuit_breaker import CircuitState
 from src.api.mock_client import MockTianyanClient, create_tianyan_client
-from src.api.tianyan_client import TianyanAPIError, TianyanClient, mask_token
+from src.api.tianyan_client import (
+    QuotaTracker,
+    TianyanAPIError,
+    TianyanClient,
+    TokenBucketRateLimiter,
+    mask_token,
+)
 from src.api.tianyan_cqlib import (
     CqlibTianyanClient,
     MultiMachineCqlibCoordinator,
     create_multi_machine_clients,
 )
-from src.exceptions import CircuitOpenError
+from src.exceptions import CircuitOpenError, RateLimitError
 
 # 简单的 Bell 态 QASM 电路，用于提交任务测试
 BELL_QASM = """
@@ -1476,6 +1482,763 @@ class TestCredentialSecurity(unittest.TestCase):
             client = TianyanClient(mock_mode=True)
         mock_load.assert_not_called()
         self.assertTrue(client.mock_mode)
+
+
+class TestTokenBucketRateLimiter(unittest.TestCase):
+    """测试令牌桶限流器（Issue #84）。"""
+
+    def test_init_capacity_and_rate(self):
+        """初始化应正确存储容量与速率，令牌数初始等于容量。"""
+        limiter = TokenBucketRateLimiter(capacity=10.0, rate=5.0)
+        self.assertEqual(limiter.capacity, 10.0)
+        self.assertEqual(limiter.rate, 5.0)
+        self.assertEqual(limiter.available_tokens, 10.0)
+
+    def test_acquire_with_sufficient_tokens(self):
+        """令牌充足时 acquire 应返回 0 且消费令牌。"""
+        limiter = TokenBucketRateLimiter(capacity=5.0, rate=1.0)
+        wait = limiter.acquire(1.0)
+        self.assertEqual(wait, 0.0)
+        self.assertAlmostEqual(limiter.available_tokens, 4.0, places=1)
+
+    def test_acquire_depletes_tokens(self):
+        """连续 acquire 应能消费全部令牌。"""
+        limiter = TokenBucketRateLimiter(capacity=3.0, rate=1.0)
+        for _ in range(3):
+            self.assertEqual(limiter.acquire(1.0), 0.0)
+        # 令牌已耗尽，下一次 acquire 应返回等待时间 > 0
+        wait = limiter.acquire(1.0)
+        self.assertGreater(wait, 0.0)
+
+    def test_acquire_returns_wait_time_when_empty(self):
+        """令牌不足时 acquire 应返回需要等待的时间。"""
+        limiter = TokenBucketRateLimiter(capacity=1.0, rate=2.0)
+        limiter.acquire(1.0)  # 耗尽
+        wait = limiter.acquire(1.0)
+        # rate=2/s，需要 1 个令牌 → 等待约 0.5s
+        self.assertGreater(wait, 0.0)
+        self.assertLess(wait, 1.0)
+
+    def test_try_acquire_succeeds_with_tokens(self):
+        """令牌充足时 try_acquire 应返回 True。"""
+        limiter = TokenBucketRateLimiter(capacity=2.0, rate=1.0)
+        self.assertTrue(limiter.try_acquire(1.0))
+        self.assertTrue(limiter.try_acquire(1.0))
+
+    def test_try_acquire_fails_when_empty(self):
+        """令牌不足时 try_acquire 应返回 False 且不消费。"""
+        limiter = TokenBucketRateLimiter(capacity=1.0, rate=1.0)
+        limiter.acquire(1.0)  # 耗尽
+        self.assertFalse(limiter.try_acquire(1.0))
+
+    def test_tokens_refill_over_time(self):
+        """令牌应随时间按速率补充。"""
+        limiter = TokenBucketRateLimiter(capacity=1.0, rate=10.0)
+        limiter.acquire(1.0)  # 耗尽
+        # 模拟时间流逝 0.1s → 补充 1 个令牌
+        with patch("src.api.tianyan_client.monotonic", return_value=limiter._last_refill + 0.1):
+            self.assertTrue(limiter.try_acquire(1.0))
+
+    def test_refill_capped_at_capacity(self):
+        """令牌补充不应超过容量上限。"""
+        limiter = TokenBucketRateLimiter(capacity=5.0, rate=100.0)
+        limiter.acquire(5.0)  # 耗尽
+        # 即使经过很长时间，也不应超过 capacity
+        with patch("src.api.tianyan_client.monotonic", return_value=limiter._last_refill + 100):
+            self.assertLessEqual(limiter.available_tokens, 5.0)
+
+    def test_rate_limiter_disabled_in_client_by_default(self):
+        """不传 max_requests_per_second 时限流器应为 None。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_MOCK_MODE", "TIANYAN_API_RATE_LIMIT")
+        with patch.dict(os.environ, env, clear=True), patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(mock_mode=True)
+        self.assertIsNone(client._rate_limiter)
+
+    def test_rate_limiter_enabled_with_param(self):
+        """传入 max_requests_per_second 时限流器应被创建。"""
+        with patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(mock_mode=True, max_requests_per_second=10.0)
+        self.assertIsNotNone(client._rate_limiter)
+        self.assertEqual(client._rate_limiter.capacity, 10.0)
+        self.assertEqual(client._rate_limiter.rate, 10.0)
+
+    def test_rate_limiter_enabled_via_env(self):
+        """环境变量 TIANYAN_API_RATE_LIMIT 应启用限流。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_MOCK_MODE", "TIANYAN_API_RATE_LIMIT")
+        env["TIANYAN_API_RATE_LIMIT"] = "8"
+        with patch.dict(os.environ, env, clear=True), patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(mock_mode=True)
+        self.assertIsNotNone(client._rate_limiter)
+        self.assertEqual(client._rate_limiter.rate, 8.0)
+
+    def test_rate_limiter_zero_disables(self):
+        """max_requests_per_second=0 时应禁用限流。"""
+        with patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(mock_mode=True, max_requests_per_second=0)
+        self.assertIsNone(client._rate_limiter)
+
+    def test_client_apply_rate_limit_blocks_when_empty(self):
+        """限流器令牌不足时 _apply_rate_limit 应调用 time.sleep。"""
+        with patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(mock_mode=True, max_requests_per_second=1.0)
+        # 耗尽令牌
+        client._rate_limiter.acquire(1.0)
+        # 下一次应触发等待
+        with patch("time.sleep") as mock_sleep:
+            client._apply_rate_limit()
+            mock_sleep.assert_called_once()
+            wait_time = mock_sleep.call_args[0][0]
+            self.assertGreater(wait_time, 0.0)
+
+    def test_client_apply_rate_limit_noop_when_disabled(self):
+        """限流未启用时 _apply_rate_limit 应直接返回。"""
+        with patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(mock_mode=True)
+        with patch("time.sleep") as mock_sleep:
+            client._apply_rate_limit()
+            mock_sleep.assert_not_called()
+
+
+class TestQuotaTracker(unittest.TestCase):
+    """测试 API 配额追踪器（Issue #84）。"""
+
+    def test_init_zero_counts(self):
+        """初始化后计数应为 0。"""
+        tracker = QuotaTracker()
+        self.assertEqual(tracker.hourly_count, 0)
+        self.assertEqual(tracker.daily_count, 0)
+
+    def test_record_increments_counts(self):
+        """record 应同时递增小时与日计数。"""
+        tracker = QuotaTracker()
+        tracker.record()
+        tracker.record()
+        tracker.record()
+        self.assertEqual(tracker.hourly_count, 3)
+        self.assertEqual(tracker.daily_count, 3)
+
+    def test_hourly_window_reset(self):
+        """超过 1 小时后小时计数应重置。"""
+        tracker = QuotaTracker()
+        tracker.record()
+        tracker.record()
+        self.assertEqual(tracker.hourly_count, 2)
+        # 模拟时间推移超过 1 小时
+        tracker._hourly_window_start -= 3601
+        self.assertEqual(tracker.hourly_count, 0)
+
+    def test_daily_window_reset(self):
+        """超过 1 天后日计数应重置。"""
+        tracker = QuotaTracker()
+        for _ in range(5):
+            tracker.record()
+        self.assertEqual(tracker.daily_count, 5)
+        # 模拟时间推移超过 1 天
+        tracker._daily_window_start -= 86401
+        self.assertEqual(tracker.daily_count, 0)
+
+    def test_record_after_hourly_reset(self):
+        """小时窗口重置后 record 应从 1 开始计数。"""
+        tracker = QuotaTracker()
+        tracker.record()
+        tracker.record()
+        tracker._hourly_window_start -= 3601
+        tracker.record()
+        self.assertEqual(tracker.hourly_count, 1)
+
+    def test_reset_clears_counts(self):
+        """reset 方法应清零所有计数。"""
+        tracker = QuotaTracker()
+        tracker.record()
+        tracker.record()
+        tracker.reset()
+        self.assertEqual(tracker.hourly_count, 0)
+        self.assertEqual(tracker.daily_count, 0)
+
+    def test_client_quota_tracking(self):
+        """TianyanClient 应通过 _track_quota 记录调用。"""
+        with patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(mock_mode=True)
+        self.assertEqual(client.get_hourly_quota(), 0)
+        self.assertEqual(client.get_daily_quota(), 0)
+        client._track_quota()
+        client._track_quota()
+        self.assertEqual(client.get_hourly_quota(), 2)
+        self.assertEqual(client.get_daily_quota(), 2)
+
+    def test_client_quota_increments_on_api_call(self):
+        """真实模式 API 调用应递增配额计数。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_MOCK_MODE")
+        env["TIANYAN_MACHINE"] = "tianyan_s"
+        with patch.dict(os.environ, env, clear=True), patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(api_key="fake-key", mock_mode=False)
+        client._cqlib = MagicMock()
+        client._cqlib.list_backends.return_value = [{"name": "tianyan_s"}]
+        before = client.get_daily_quota()
+        client.list_backends()
+        after = client.get_daily_quota()
+        self.assertGreater(after, before)
+
+
+class TestAdaptiveBackoff(unittest.TestCase):
+    """测试 429 自适应退避（Issue #84）。"""
+
+    def test_compute_adaptive_backoff_exponential(self):
+        """退避时间应随重试次数指数增长。"""
+        with patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(mock_mode=True, retry_delay=1.0)
+        # 固定 jitter 为 0 以测试纯指数部分
+        with patch("random.uniform", return_value=0.0):
+            b0 = client._compute_adaptive_backoff(0)
+            b1 = client._compute_adaptive_backoff(1)
+            b2 = client._compute_adaptive_backoff(2)
+        self.assertAlmostEqual(b0, 1.0, places=2)
+        self.assertAlmostEqual(b1, 2.0, places=2)
+        self.assertAlmostEqual(b2, 4.0, places=2)
+
+    def test_compute_adaptive_backoff_has_jitter(self):
+        """退避时间应包含随机 jitter。"""
+        with patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(mock_mode=True, retry_delay=1.0)
+        with patch("random.uniform", return_value=0.05):
+            backoff = client._compute_adaptive_backoff(0)
+        self.assertAlmostEqual(backoff, 1.05, places=2)
+
+    def test_compute_adaptive_backoff_retry_after_override(self):
+        """服务端 Retry-After 大于指数退避时应采用 Retry-After。"""
+        with patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(mock_mode=True, retry_delay=0.1)
+        with patch("random.uniform", return_value=0.0):
+            backoff = client._compute_adaptive_backoff(0, retry_after=10.0)
+        self.assertGreaterEqual(backoff, 10.0)
+
+    def test_is_rate_limited_detects_429(self):
+        """_is_rate_limited 应识别 status_code=429 的异常。"""
+        exc = TianyanAPIError(status_code=429, message="Too Many Requests")
+        self.assertTrue(TianyanClient._is_rate_limited(exc))
+
+    def test_is_rate_limited_detects_rate_limit_error(self):
+        """_is_rate_limited 应识别 RateLimitError。"""
+        exc = RateLimitError("限流")
+        self.assertTrue(TianyanClient._is_rate_limited(exc))
+
+    def test_is_rate_limited_ignores_other_errors(self):
+        """_is_rate_limited 应忽略非 429 异常。"""
+        exc = TianyanAPIError(status_code=500, message="内部错误")
+        self.assertFalse(TianyanClient._is_rate_limited(exc))
+        self.assertFalse(TianyanClient._is_rate_limited(RuntimeError("boom")))
+
+    def test_429_triggers_adaptive_backoff_retry(self):
+        """429 响应应触发自适应退避重试并最终成功。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_MOCK_MODE")
+        env["TIANYAN_MACHINE"] = "tianyan_s"
+        with patch.dict(os.environ, env, clear=True), patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(api_key="fake-key", mock_mode=False, max_retries=3, retry_delay=0.01)
+        client._cqlib = MagicMock()
+        call_count = {"n": 0}
+
+        def _flaky(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] <= 2:
+                raise TianyanAPIError(status_code=429, message="Too Many Requests")
+            return [{"name": "tianyan_s"}]
+
+        client._cqlib.list_backends.side_effect = _flaky
+        with patch("time.sleep"), patch("random.uniform", return_value=0.0):
+            result = client.list_backends()
+        self.assertEqual(result, [{"name": "tianyan_s"}])
+        self.assertEqual(call_count["n"], 3)
+
+    def test_429_exhausted_raises_rate_limit_error(self):
+        """429 重试耗尽应抛出 RateLimitError。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_MOCK_MODE")
+        env["TIANYAN_MACHINE"] = "tianyan_s"
+        with patch.dict(os.environ, env, clear=True), patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(api_key="fake-key", mock_mode=False, max_retries=1, retry_delay=0.01)
+        client._cqlib = MagicMock()
+        client._cqlib.list_backends.side_effect = TianyanAPIError(
+            status_code=429, message="Too Many Requests"
+        )
+        with (
+            patch("time.sleep"),
+            patch("random.uniform", return_value=0.0),
+            self.assertRaises(RateLimitError),
+        ):
+            client.list_backends()
+
+    def test_429_converted_to_rate_limit_error(self):
+        """429 TianyanAPIError 应被转换为 RateLimitError 抛出。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_MOCK_MODE")
+        env["TIANYAN_MACHINE"] = "tianyan_s"
+        with patch.dict(os.environ, env, clear=True), patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(api_key="fake-key", mock_mode=False, max_retries=0, retry_delay=0.01)
+        client._cqlib = MagicMock()
+        client._cqlib.get_backend_info.side_effect = TianyanAPIError(
+            status_code=429, message="Too Many Requests"
+        )
+        with self.assertRaises(RateLimitError) as ctx:
+            client.get_backend_info("tianyan_s")
+        self.assertEqual(ctx.exception.code, "RATE_LIMIT")
+        self.assertTrue(ctx.exception.retryable)
+
+    def test_non_429_error_uses_fixed_retry_delay(self):
+        """非 429 异常应使用固定 retry_delay 重试。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_MOCK_MODE")
+        env["TIANYAN_MACHINE"] = "tianyan_s"
+        with patch.dict(os.environ, env, clear=True), patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(api_key="fake-key", mock_mode=False, max_retries=2, retry_delay=0.05)
+        client._cqlib = MagicMock()
+        call_count = {"n": 0}
+
+        def _flaky(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] <= 2:
+                raise RuntimeError("网络错误")
+            return [{"name": "tianyan_s"}]
+
+        client._cqlib.list_backends.side_effect = _flaky
+        with patch("time.sleep") as mock_sleep:
+            result = client.list_backends()
+        self.assertEqual(result, [{"name": "tianyan_s"}])
+        # 非 429 应使用固定 retry_delay
+        for call_args in mock_sleep.call_args_list:
+            self.assertEqual(call_args[0][0], 0.05)
+
+    def test_retry_after_from_rate_limit_error(self):
+        """RateLimitError 携带的 retry_after 应用于退避计算。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_MOCK_MODE")
+        env["TIANYAN_MACHINE"] = "tianyan_s"
+        with patch.dict(os.environ, env, clear=True), patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(api_key="fake-key", mock_mode=False, max_retries=1, retry_delay=0.01)
+        client._cqlib = MagicMock()
+        client._cqlib.get_queue_status.side_effect = RateLimitError("限流", retry_after=5.0)
+        with (
+            patch("time.sleep") as mock_sleep,
+            patch("random.uniform", return_value=0.0),
+            self.assertRaises(RateLimitError),
+        ):
+            client.get_queue_status()
+        # 应使用 retry_after=5.0 而非指数退避
+        mock_sleep.assert_called_with(5.0)
+
+
+class TestRateLimitCircuitBreakerIntegration(unittest.TestCase):
+    """测试限流与熔断器联动（Issue #84）：限流失败不触发熔断。"""
+
+    def setUp(self):
+        """构造真实模式客户端（带熔断器与限流）。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_MOCK_MODE", "TIANYAN_API_RATE_LIMIT")
+        env["TIANYAN_MACHINE"] = "tianyan_s"
+        with patch.dict(os.environ, env, clear=True), patch("src.api.tianyan_client.load_dotenv"):
+            self.client = TianyanClient(
+                api_key="fake-key",
+                mock_mode=False,
+                max_retries=0,
+                retry_delay=0.01,
+            )
+        self.client._cqlib = MagicMock()
+
+    def test_rate_limit_does_not_open_circuit_breaker(self):
+        """429 限流连续失败不应触发熔断器 OPEN。"""
+        self.client._cqlib.get_task_status.side_effect = TianyanAPIError(
+            status_code=429, message="Too Many Requests"
+        )
+        # 连续 10 次限流失败（远超熔断阈值 5）
+        for _ in range(10):
+            with self.assertRaises(RateLimitError):
+                self.client.get_task_status("tid")
+        # 熔断器应仍为 closed
+        self.assertEqual(self.client.get_circuit_state(), "closed")
+
+    def test_rate_limit_error_skips_circuit_breaker_on_failure(self):
+        """RateLimitError 不应调用熔断器 on_failure。"""
+        self.client._cqlib.get_task_status.side_effect = RateLimitError("限流")
+        with self.assertRaises(RateLimitError):
+            self.client.get_task_status("tid")
+        # 失败计数应仍为 0
+        if self.client._circuit_breaker:
+            self.assertEqual(self.client._circuit_breaker.failure_count, 0)
+
+    def test_non_rate_limit_error_triggers_circuit_breaker(self):
+        """非限流异常仍应正常触发熔断器失败计数。"""
+        self.client._cqlib.get_task_status.side_effect = RuntimeError("网络错误")
+        with self.assertRaises(RuntimeError):
+            self.client.get_task_status("tid")
+        if self.client._circuit_breaker:
+            self.assertEqual(self.client._circuit_breaker.failure_count, 1)
+
+    def test_circuit_breaker_opens_on_non_rate_limit_errors(self):
+        """非限流连续失败达阈值后熔断器应 OPEN。"""
+        self.client._cqlib.get_task_status.side_effect = RuntimeError("网络错误")
+        for _ in range(5):
+            with self.assertRaises(RuntimeError):
+                self.client.get_task_status("tid")
+        self.assertEqual(self.client.get_circuit_state(), "open")
+
+    def test_mixed_errors_rate_limit_does_not_count(self):
+        """限流与普通错误混合时，仅普通错误计入熔断器。"""
+        # 3 次限流 + 3 次普通错误 = 熔断器失败计数应为 3（未达阈值 5）
+        for _ in range(3):
+            self.client._cqlib.get_task_status.side_effect = TianyanAPIError(
+                status_code=429, message="限流"
+            )
+            with self.assertRaises(RateLimitError):
+                self.client.get_task_status("tid")
+
+        for _ in range(3):
+            self.client._cqlib.get_task_status.side_effect = RuntimeError("网络错误")
+            with self.assertRaises(RuntimeError):
+                self.client.get_task_status("tid")
+
+        if self.client._circuit_breaker:
+            self.assertEqual(self.client._circuit_breaker.failure_count, 3)
+        self.assertEqual(self.client.get_circuit_state(), "closed")
+
+    def test_rate_limit_then_success_resets_nothing(self):
+        """限流失败后成功调用，熔断器失败计数应保持 0（从未递增）。"""
+        self.client._cqlib.get_task_status.side_effect = TianyanAPIError(
+            status_code=429, message="限流"
+        )
+        with self.assertRaises(RateLimitError):
+            self.client.get_task_status("tid")
+
+        self.client._cqlib.get_task_status.side_effect = None
+        self.client._cqlib.get_task_status.return_value = {"status": "ok"}
+        result = self.client.get_task_status("tid")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(self.client.get_circuit_state(), "closed")
+        if self.client._circuit_breaker:
+            self.assertEqual(self.client._circuit_breaker.failure_count, 0)
+
+
+class TestComprehensiveApiClient(unittest.TestCase):
+    """综合 API 客户端测试（Issue #76）：补全核心方法的 mock 测试。"""
+
+    def setUp(self):
+        """构造真实模式客户端（cqlib 委托），替换 _cqlib 为 MagicMock。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_MOCK_MODE")
+        env["TIANYAN_MACHINE"] = "tianyan_s"
+        with patch.dict(os.environ, env, clear=True), patch("src.api.tianyan_client.load_dotenv"):
+            self.client = TianyanClient(api_key="fake-key", mock_mode=False, max_retries=1, retry_delay=0.01)
+        self.client._cqlib = MagicMock()
+
+    # -- submit_quantum_task 综合测试 --
+
+    def test_submit_quantum_task_success(self):
+        """submit_quantum_task 成功应返回 task_id。"""
+        self.client._cqlib.submit_quantum_task.return_value = "real-tid-001"
+        tid = self.client.submit_quantum_task(qcis="H Q0\nM Q0", shots=1024, task_name="Test")
+        self.assertEqual(tid, "real-tid-001")
+        self.client._cqlib.submit_quantum_task.assert_called_once_with(
+            qcis="H Q0\nM Q0", shots=1024, task_name="Test"
+        )
+
+    def test_submit_quantum_task_retries_on_failure(self):
+        """submit_quantum_task 失败应重试并最终成功。"""
+        call_count = {"n": 0}
+
+        def _flaky(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("瞬时错误")
+            return "tid-after-retry"
+
+        self.client._cqlib.submit_quantum_task.side_effect = _flaky
+        with patch("time.sleep"):
+            tid = self.client.submit_quantum_task(qcis="H Q0\nM Q0", shots=64)
+        self.assertEqual(tid, "tid-after-retry")
+        self.assertEqual(call_count["n"], 2)
+
+    def test_submit_quantum_task_retries_exhausted(self):
+        """submit_quantum_task 重试耗尽应抛出最后一次异常。"""
+        self.client._cqlib.submit_quantum_task.side_effect = RuntimeError("持续失败")
+        with patch("time.sleep"), self.assertRaises(RuntimeError):
+            self.client.submit_quantum_task(qcis="H Q0\nM Q0", shots=64)
+
+    def test_submit_quantum_task_with_circuit_qasm_fallback(self):
+        """未提供 qcis 时应回退使用 circuit_qasm。"""
+        self.client._cqlib.submit_quantum_task.return_value = "tid-qasm"
+        tid = self.client.submit_quantum_task(circuit_qasm="OPENQASM 2.0;", shots=128)
+        self.assertEqual(tid, "tid-qasm")
+        kwargs = self.client._cqlib.submit_quantum_task.call_args.kwargs
+        self.assertEqual(kwargs["qcis"], "OPENQASM 2.0;")
+
+    def test_submit_quantum_task_none_return_raises(self):
+        """cqlib 返回 None 时应抛出 TianyanAPIError(500)。"""
+        self.client._cqlib.submit_quantum_task.return_value = None
+        with self.assertRaises(TianyanAPIError) as ctx:
+            self.client.submit_quantum_task(qcis="H Q0\nM Q0", shots=64)
+        self.assertEqual(ctx.exception.status_code, 500)
+
+    # -- get_task_result 综合测试 --
+
+    def test_get_task_result_success(self):
+        """get_task_result 成功应返回结果字典。"""
+        self.client._cqlib.get_task_result.return_value = {
+            "counts": {"00": 512, "11": 512},
+            "shots": 1024,
+        }
+        result = self.client.get_task_result("tid-100")
+        self.assertEqual(result["counts"]["00"], 512)
+        self.client._cqlib.get_task_result.assert_called_once_with("tid-100")
+
+    def test_get_task_result_retries_on_failure(self):
+        """get_task_result 失败应重试。"""
+        call_count = {"n": 0}
+
+        def _flaky(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("超时")
+            return {"counts": {"0": 1024}}
+
+        self.client._cqlib.get_task_result.side_effect = _flaky
+        with patch("time.sleep"):
+            result = self.client.get_task_result("tid-200")
+        self.assertEqual(result["counts"]["0"], 1024)
+        self.assertEqual(call_count["n"], 2)
+
+    def test_get_task_result_retries_exhausted(self):
+        """get_task_result 重试耗尽应抛出异常。"""
+        self.client._cqlib.get_task_result.side_effect = RuntimeError("持续失败")
+        with patch("time.sleep"), self.assertRaises(RuntimeError):
+            self.client.get_task_result("tid-300")
+
+    # -- get_backend_info 综合测试 --
+
+    def test_get_backend_info_tianyan_287(self):
+        """get_backend_info 应返回 tianyan-287 后端详情。"""
+        self.client._cqlib.get_backend_info.return_value = {
+            "name": "tianyan-287",
+            "num_qubits": 287,
+            "status": "online",
+        }
+        info = self.client.get_backend_info("tianyan-287")
+        self.assertEqual(info["name"], "tianyan-287")
+        self.assertEqual(info["num_qubits"], 287)
+
+    def test_get_backend_info_simulator(self):
+        """get_backend_info 应返回模拟器后端详情。"""
+        self.client._cqlib.get_backend_info.return_value = {
+            "name": "tianyan-simulator",
+            "num_qubits": 30,
+            "status": "online",
+        }
+        info = self.client.get_backend_info("tianyan-simulator")
+        self.assertEqual(info["num_qubits"], 30)
+
+    def test_get_backend_info_retries_on_failure(self):
+        """get_backend_info 失败应重试。"""
+        call_count = {"n": 0}
+
+        def _flaky(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("网络错误")
+            return {"name": "tianyan_s"}
+
+        self.client._cqlib.get_backend_info.side_effect = _flaky
+        with patch("time.sleep"):
+            info = self.client.get_backend_info("tianyan_s")
+        self.assertEqual(info["name"], "tianyan_s")
+        self.assertEqual(call_count["n"], 2)
+
+    def test_get_backend_info_nonexistent_raises(self):
+        """查询不存在后端应抛出异常（cqlib 侧）。"""
+        self.client._cqlib.get_backend_info.side_effect = RuntimeError("后端不存在")
+        with patch("time.sleep"), self.assertRaises(RuntimeError):
+            self.client.get_backend_info("no-such-backend")
+
+    # -- get_queue_status 综合测试 --
+
+    def test_get_queue_status_normal(self):
+        """get_queue_status 应返回正常队列状态。"""
+        self.client._cqlib.get_queue_status.return_value = {
+            "total_pending": 5,
+            "total_running": 2,
+            "queue_capacity": 100,
+        }
+        q = self.client.get_queue_status()
+        self.assertEqual(q["total_pending"], 5)
+        self.assertEqual(q["total_running"], 2)
+
+    def test_get_queue_status_deep_queue(self):
+        """get_queue_status 应能处理深度队列场景。"""
+        self.client._cqlib.get_queue_status.return_value = {
+            "total_pending": 500,
+            "total_running": 10,
+            "queue_capacity": 1000,
+        }
+        q = self.client.get_queue_status()
+        self.assertEqual(q["total_pending"], 500)
+
+    def test_get_queue_status_empty_queue(self):
+        """get_queue_status 应能处理空队列场景。"""
+        self.client._cqlib.get_queue_status.return_value = {
+            "total_pending": 0,
+            "total_running": 0,
+            "queue_capacity": 100,
+        }
+        q = self.client.get_queue_status()
+        self.assertEqual(q["total_pending"], 0)
+
+    def test_get_queue_status_retries_on_failure(self):
+        """get_queue_status 失败应重试。"""
+        call_count = {"n": 0}
+
+        def _flaky(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("超时")
+            return {"total_pending": 1}
+
+        self.client._cqlib.get_queue_status.side_effect = _flaky
+        with patch("time.sleep"):
+            q = self.client.get_queue_status()
+        self.assertEqual(q["total_pending"], 1)
+        self.assertEqual(call_count["n"], 2)
+
+    # -- authenticate 综合测试 --
+
+    def test_authenticate_success(self):
+        """authenticate 成功应返回 True。"""
+        self.client._cqlib.authenticate.return_value = True
+        self.assertTrue(self.client.authenticate())
+        self.client._cqlib.authenticate.assert_called_once()
+
+    def test_authenticate_failure_returns_false(self):
+        """authenticate 失败应返回 False。"""
+        self.client._cqlib.authenticate.return_value = False
+        self.assertFalse(self.client.authenticate())
+
+    def test_authenticate_retries_on_transient_error(self):
+        """authenticate 瞬时错误应重试并最终成功。"""
+        call_count = {"n": 0}
+
+        def _flaky():
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("连接超时")
+            return True
+
+        self.client._cqlib.authenticate.side_effect = _flaky
+        with patch("time.sleep"):
+            result = self.client.authenticate()
+        self.assertTrue(result)
+        self.assertEqual(call_count["n"], 2)
+
+    def test_authenticate_retries_exhausted_raises(self):
+        """authenticate 重试耗尽应抛出最后一次异常。"""
+        self.client._cqlib.authenticate.side_effect = RuntimeError("持续失败")
+        with patch("time.sleep"), self.assertRaises(RuntimeError):
+            self.client.authenticate()
+
+    # -- 熔断器状态转换综合测试 --
+
+    def test_circuit_breaker_closed_to_open(self):
+        """CLOSED → OPEN：连续失败达阈值应熔断。"""
+        self.client._cqlib.get_task_status.side_effect = RuntimeError("网络错误")
+        for _ in range(5):
+            with self.assertRaises(RuntimeError):
+                self.client.get_task_status("tid")
+        self.assertEqual(self.client.get_circuit_state(), "open")
+
+    def test_circuit_breaker_open_rejects_request(self):
+        """OPEN 状态应拒绝请求并抛出 CircuitOpenError。"""
+        self.client._cqlib.get_task_status.side_effect = RuntimeError("网络错误")
+        for _ in range(5):
+            with self.assertRaises(RuntimeError):
+                self.client.get_task_status("tid")
+        with self.assertRaises(CircuitOpenError):
+            self.client.get_task_status("tid")
+
+    def test_circuit_breaker_open_to_half_open_to_closed(self):
+        """OPEN → HALF_OPEN → CLOSED：恢复超时后试探成功应恢复。"""
+        cb = self.client._circuit_breaker
+        self.assertIsNotNone(cb)
+        cb.state = CircuitState.OPEN
+        cb.last_failure_time = 0.0  # 模拟已过恢复超时
+        self.client._cqlib.get_task_status.return_value = {"status": "ok"}
+        result = self.client.get_task_status("tid")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(self.client.get_circuit_state(), "closed")
+
+    def test_circuit_breaker_half_open_failure_increments_count(self):
+        """HALF_OPEN 状态下试探失败应递增失败计数。"""
+        cb = self.client._circuit_breaker
+        self.assertIsNotNone(cb)
+        cb.state = CircuitState.HALF_OPEN
+        cb.failure_count = 0
+        self.client._cqlib.get_task_status.side_effect = RuntimeError("仍故障")
+        with self.assertRaises(RuntimeError):
+            self.client.get_task_status("tid")
+        # 失败计数应递增（HALF_OPEN 下 on_failure 仍计数）
+        self.assertEqual(cb.failure_count, 1)
+
+    def test_circuit_breaker_success_resets_failure_count(self):
+        """成功调用应重置失败计数。"""
+        self.client._cqlib.get_task_status.side_effect = [
+            RuntimeError("错误1"),
+            RuntimeError("错误2"),
+            {"status": "ok"},
+        ]
+        with patch("time.sleep"):
+            # 两次失败
+            with self.assertRaises(RuntimeError):
+                self.client.get_task_status("tid")
+            with self.assertRaises(RuntimeError):
+                self.client.get_task_status("tid")
+            # 第三次成功
+            result = self.client.get_task_status("tid")
+        self.assertEqual(result["status"], "ok")
+        if self.client._circuit_breaker:
+            self.assertEqual(self.client._circuit_breaker.failure_count, 0)
+
+    # -- 错误处理路径 --
+
+    def test_submit_quantum_task_no_cqlib_raises(self):
+        """无 cqlib 时 submit_quantum_task 应抛出 TianyanAPIError(500)。"""
+        self.client._cqlib = None
+        with self.assertRaises(TianyanAPIError) as ctx:
+            self.client.submit_quantum_task(qcis="H Q0\nM Q0", shots=64)
+        self.assertEqual(ctx.exception.status_code, 500)
+
+    def test_get_task_result_no_cqlib_raises(self):
+        """无 cqlib 时 get_task_result 应抛出 TianyanAPIError(500)。"""
+        self.client._cqlib = None
+        with self.assertRaises(TianyanAPIError) as ctx:
+            self.client.get_task_result("tid")
+        self.assertEqual(ctx.exception.status_code, 500)
+
+    def test_get_backend_info_no_cqlib_raises(self):
+        """无 cqlib 时 get_backend_info 应抛出 TianyanAPIError(500)。"""
+        self.client._cqlib = None
+        with self.assertRaises(TianyanAPIError) as ctx:
+            self.client.get_backend_info("tianyan_s")
+        self.assertEqual(ctx.exception.status_code, 500)
+
+    def test_get_queue_status_no_cqlib_raises(self):
+        """无 cqlib 时 get_queue_status 应抛出 TianyanAPIError(500)。"""
+        self.client._cqlib = None
+        with self.assertRaises(TianyanAPIError) as ctx:
+            self.client.get_queue_status()
+        self.assertEqual(ctx.exception.status_code, 500)
+
+    def test_authenticate_no_cqlib_returns_false(self):
+        """无 cqlib 时 authenticate 应返回 False。"""
+        self.client._cqlib = None
+        self.assertFalse(self.client.authenticate())
+
+    def test_submit_quantum_task_empty_input_raises_value_error(self):
+        """真实模式未提供 qcis/circuit_qasm 应抛出 ValueError。"""
+        with self.assertRaises(ValueError):
+            self.client.submit_quantum_task(qcis="", circuit_qasm="", shots=64)
+
+    def test_timeout_parameter_configurable(self):
+        """timeout 应可通过构造函数配置。"""
+        with patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(mock_mode=True, timeout=99.0)
+        self.assertEqual(client.timeout, 99.0)
 
 
 if __name__ == "__main__":
