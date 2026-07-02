@@ -11,9 +11,11 @@ Tianyan Cloud Platform API Client
 
 import os
 import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from enum import Enum
 from time import monotonic
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 import requests
 import yaml
@@ -21,6 +23,14 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from src.exceptions import CircuitOpenError
+from src.utils.metrics import (
+    api_calls,
+    api_errors,
+    api_request_duration,
+    tianyan_cb_state,
+)
+
+T = TypeVar("T")
 
 
 class CircuitState(Enum):
@@ -127,6 +137,9 @@ class TianyanClient:
         base_url: API 基础 URL（默认从 config/config.yaml 读取，仅用于日志）
         mock_mode: 是否使用 Mock 模式（None 表示自动检测）
         enable_circuit_breaker: 是否启用熔断器（默认 True）
+        timeout: 单次 API 请求超时时间（秒），默认 30.0
+        max_retries: API 请求失败最大重试次数，默认 3
+        retry_delay: 重试间隔（秒），默认 1.0
     """
 
     def __init__(
@@ -135,6 +148,9 @@ class TianyanClient:
         base_url: str | None = None,
         mock_mode: bool | None = None,
         enable_circuit_breaker: bool = True,
+        timeout: float | None = None,
+        max_retries: int | None = None,
+        retry_delay: float | None = None,
     ):
         """初始化天衍云客户端
 
@@ -146,14 +162,39 @@ class TianyanClient:
         3. 配置文件 ``config/config.yaml`` 中的 ``tianyan.mock_mode``
         4. 默认：True（开发阶段默认使用 Mock 模式）
 
+        请求超时与重试配置读取顺序：显式传参 > 环境变量 > 默认值：
+        - ``timeout`` ← ``TIANYAN_API_TIMEOUT``（默认 30.0）
+        - ``max_retries`` ← ``TIANYAN_API_MAX_RETRIES``（默认 3）
+        - ``retry_delay`` ← ``TIANYAN_API_RETRY_DELAY``（默认 1.0）
+
         Args:
             api_key: API 密钥，若为 None 则从环境变量 ``TIANYAN_API_KEY`` 读取。
             base_url: API 基础 URL，若为 None 则从 ``config/config.yaml`` 读取。
             mock_mode: 是否使用 Mock 模式，None 表示自动检测。
             enable_circuit_breaker: 是否启用熔断器模式。
+            timeout: 单次 API 请求超时时间（秒），默认 30.0，
+                可通过环境变量 ``TIANYAN_API_TIMEOUT`` 覆盖。
+            max_retries: API 请求失败最大重试次数，默认 3，
+                可通过环境变量 ``TIANYAN_API_MAX_RETRIES`` 覆盖。
+            retry_delay: 重试间隔（秒），默认 1.0，
+                可通过环境变量 ``TIANYAN_API_RETRY_DELAY`` 覆盖。
         """
         # 按需加载 .env 文件中的环境变量
         load_dotenv()
+
+        # 请求超时与重试配置（显式传参 > 环境变量 > 默认值）
+        self.timeout: float = (
+            timeout if timeout is not None
+            else float(os.getenv("TIANYAN_API_TIMEOUT", "30.0"))
+        )
+        self.max_retries: int = (
+            max_retries if max_retries is not None
+            else int(os.getenv("TIANYAN_API_MAX_RETRIES", "3"))
+        )
+        self.retry_delay: float = (
+            retry_delay if retry_delay is not None
+            else float(os.getenv("TIANYAN_API_RETRY_DELAY", "1.0"))
+        )
 
         # 确定是否使用 Mock 模式
         self.mock_mode = self._detect_mock_mode(mock_mode)
@@ -266,6 +307,83 @@ class TianyanClient:
             return default_url
 
     # ------------------------------------------------------------------
+    # 内部工具：重试、指标埋点、熔断器状态同步
+    # ------------------------------------------------------------------
+
+    def _call_with_retry(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        """带重试的 API 调用包装器
+
+        在调用失败时按 ``max_retries`` 与 ``retry_delay`` 进行重试，
+        重试耗尽后抛出最后一次异常。
+
+        Args:
+            func: 待调用的可调用对象。
+            *args: 透传给 ``func`` 的位置参数。
+            **kwargs: 透传给 ``func`` 的关键字参数。
+
+        Returns:
+            ``func`` 的返回值。
+
+        Raises:
+            Exception: 重试耗尽后抛出最后一次异常。
+        """
+        last_exc: Exception | None = None
+        total_attempts = max(1, self.max_retries + 1)
+        for attempt in range(total_attempts):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                last_exc = e
+                if attempt < total_attempts - 1:
+                    logger.debug(
+                        f"API 调用第 {attempt + 1}/{total_attempts} 次失败: "
+                        f"{type(e).__name__}: {e}，{self.retry_delay}s 后重试"
+                    )
+                    time.sleep(self.retry_delay)
+                else:
+                    logger.debug(
+                        f"API 调用重试耗尽（共 {total_attempts} 次）: "
+                        f"{type(e).__name__}: {e}"
+                    )
+        assert last_exc is not None
+        raise last_exc
+
+    @contextmanager
+    def _observe_api_call(self, method: str, endpoint: str) -> Iterator[None]:
+        """记录 API 调用指标的上下文管理器
+
+        进入时递增请求计数器；退出时将耗时记录到延迟直方图；
+        若调用抛出异常则递增错误计数器；最后同步熔断器状态 Gauge。
+
+        Args:
+            method: 调用方法名称（如 ``"submit_quantum_task"``）。
+            endpoint: API 端点名称（如 ``"quantum_task"``）。
+        """
+        api_calls.labels(method=method, endpoint=endpoint).inc()
+        start = monotonic()
+        try:
+            yield
+        except Exception as e:
+            api_errors.labels(
+                method=method, endpoint=endpoint, error_type=type(e).__name__
+            ).inc()
+            raise
+        finally:
+            duration = monotonic() - start
+            api_request_duration.labels(method=method, endpoint=endpoint).observe(duration)
+            self._update_circuit_breaker_gauge()
+
+    def _update_circuit_breaker_gauge(self) -> None:
+        """同步熔断器状态到 Prometheus Gauge
+
+        将熔断器字符串状态映射为数值并写入 ``tianyan_circuit_breaker_state``：
+        closed=0, open=1, half_open=2。
+        """
+        state_map = {"closed": 0, "open": 1, "half_open": 2}
+        state = self.get_circuit_state()
+        tianyan_cb_state.set(state_map.get(state, 0))
+
+    # ------------------------------------------------------------------
     # 1. 认证验证
     # ------------------------------------------------------------------
 
@@ -279,11 +397,13 @@ class TianyanClient:
         """
         # Mock 模式委托
         if self.mock_mode and hasattr(self, "_mock_client") and self._mock_client:
-            return cast(bool, self._mock_client.authenticate())
+            with self._observe_api_call("authenticate", "auth"):
+                return cast(bool, self._mock_client.authenticate())
 
         # 真实模式委托 cqlib
         if self._cqlib is not None:
-            return self._cqlib.authenticate()
+            with self._observe_api_call("authenticate", "auth"):
+                return cast(bool, self._call_with_retry(self._cqlib.authenticate))
 
         logger.error("认证失败：未配置有效 API 密钥或 cqlib 客户端")
         return False
@@ -316,26 +436,29 @@ class TianyanClient:
         """
         # Mock 模式委托
         if self.mock_mode and hasattr(self, "_mock_client") and self._mock_client:
-            return cast(
-                str,
-                self._mock_client.submit_quantum_task(
-                    circuit_qasm=circuit_qasm, shots=shots, backend=backend
-                ),
-            )
+            with self._observe_api_call("submit_quantum_task", "quantum_task"):
+                return cast(
+                    str,
+                    self._mock_client.submit_quantum_task(
+                        circuit_qasm=circuit_qasm, shots=shots, backend=backend
+                    ),
+                )
 
         # 真实模式委托 cqlib
         if self._cqlib is not None:
             qcis_str = qcis or circuit_qasm
             if not qcis_str:
                 raise ValueError("真实模式需提供 qcis 或 circuit_qasm")
-            task_id = self._cqlib.submit_quantum_task(
-                qcis=qcis_str,
-                shots=shots,
-                task_name=task_name,
-            )
-            if task_id is None:
-                raise TianyanAPIError(500, "cqlib did not return a task_id")
-            return task_id
+            with self._observe_api_call("submit_quantum_task", "quantum_task"):
+                task_id = self._call_with_retry(
+                    self._cqlib.submit_quantum_task,
+                    qcis=qcis_str,
+                    shots=shots,
+                    task_name=task_name,
+                )
+                if task_id is None:
+                    raise TianyanAPIError(500, "cqlib did not return a task_id")
+                return task_id
 
         raise TianyanAPIError(
             status_code=500,
@@ -359,23 +482,24 @@ class TianyanClient:
             self._circuit_breaker.before_request()
 
         try:
-            if self.mock_mode and hasattr(self, "_mock_client") and self._mock_client:
-                result = cast(dict[str, Any], self._mock_client.get_task_status(task_id))
-                if self._circuit_breaker:
-                    self._circuit_breaker.on_success()
-                return result
+            with self._observe_api_call("get_task_status", "task_status"):
+                if self.mock_mode and hasattr(self, "_mock_client") and self._mock_client:
+                    result = cast(dict[str, Any], self._mock_client.get_task_status(task_id))
+                    if self._circuit_breaker:
+                        self._circuit_breaker.on_success()
+                    return result
 
-            # 真实模式委托 cqlib
-            if self._cqlib is not None:
-                result = self._cqlib.get_task_status(task_id)
-                if self._circuit_breaker:
-                    self._circuit_breaker.on_success()
-                return result
+                # 真实模式委托 cqlib
+                if self._cqlib is not None:
+                    result = self._cqlib.get_task_status(task_id)
+                    if self._circuit_breaker:
+                        self._circuit_breaker.on_success()
+                    return result
 
-            raise TianyanAPIError(
-                status_code=500,
-                message="未配置有效 API 密钥或 cqlib 客户端，无法查询任务状态",
-            )
+                raise TianyanAPIError(
+                    status_code=500,
+                    message="未配置有效 API 密钥或 cqlib 客户端，无法查询任务状态",
+                )
         except Exception as e:
             # 熔断器需捕获所有异常以记录失败计数，原异常重新抛出由上层处理
             logger.debug(f"get_task_status 失败，已触发熔断器失败计数: {type(e).__name__}: {e}")
@@ -402,11 +526,16 @@ class TianyanClient:
             TianyanAPIError: 查询失败或任务尚未完成时抛出
         """
         if self.mock_mode and hasattr(self, "_mock_client") and self._mock_client:
-            return cast(dict[str, Any], self._mock_client.get_task_result(task_id))
+            with self._observe_api_call("get_task_result", "task_result"):
+                return cast(dict[str, Any], self._mock_client.get_task_result(task_id))
 
         # 真实模式委托 cqlib
         if self._cqlib is not None:
-            return self._cqlib.get_task_result(task_id)
+            with self._observe_api_call("get_task_result", "task_result"):
+                return cast(
+                    dict[str, Any],
+                    self._call_with_retry(self._cqlib.get_task_result, task_id),
+                )
 
         raise TianyanAPIError(
             status_code=500,
@@ -428,11 +557,13 @@ class TianyanClient:
             TianyanAPIError: 查询失败时抛出
         """
         if self.mock_mode and hasattr(self, "_mock_client") and self._mock_client:
-            return cast(list[dict[str, Any]], self._mock_client.list_backends())
+            with self._observe_api_call("list_backends", "backends"):
+                return cast(list[dict[str, Any]], self._mock_client.list_backends())
 
         # 真实模式委托 cqlib
         if self._cqlib is not None:
-            return self._cqlib.list_backends()
+            with self._observe_api_call("list_backends", "backends"):
+                return cast(list[dict[str, Any]], self._call_with_retry(self._cqlib.list_backends))
 
         raise TianyanAPIError(
             status_code=500,
@@ -461,11 +592,16 @@ class TianyanClient:
             TianyanAPIError: 查询失败或后端不存在时抛出
         """
         if self.mock_mode and hasattr(self, "_mock_client") and self._mock_client:
-            return cast(dict[str, Any], self._mock_client.get_backend_info(backend_name))
+            with self._observe_api_call("get_backend_info", "backend_info"):
+                return cast(dict[str, Any], self._mock_client.get_backend_info(backend_name))
 
         # 真实模式委托 cqlib
         if self._cqlib is not None:
-            return self._cqlib.get_backend_info(backend_name)
+            with self._observe_api_call("get_backend_info", "backend_info"):
+                return cast(
+                    dict[str, Any],
+                    self._call_with_retry(self._cqlib.get_backend_info, backend_name),
+                )
 
         raise TianyanAPIError(
             status_code=500,
@@ -492,7 +628,11 @@ class TianyanClient:
             TianyanAPIError: 提交失败时抛出
         """
         if self.mock_mode and hasattr(self, "_mock_client") and self._mock_client:
-            return cast(str, self._mock_client.submit_classical_task(code=code, language=language))
+            with self._observe_api_call("submit_classical_task", "classical_task"):
+                return cast(
+                    str,
+                    self._mock_client.submit_classical_task(code=code, language=language),
+                )
 
         raise TianyanAPIError(
             status_code=500,
@@ -518,11 +658,16 @@ class TianyanClient:
             TianyanAPIError: 查询失败时抛出
         """
         if self.mock_mode and hasattr(self, "_mock_client") and self._mock_client:
-            return cast(dict[str, Any], self._mock_client.get_queue_status())
+            with self._observe_api_call("get_queue_status", "queue_status"):
+                return cast(dict[str, Any], self._mock_client.get_queue_status())
 
         # 真实模式委托 cqlib
         if self._cqlib is not None:
-            return self._cqlib.get_queue_status()
+            with self._observe_api_call("get_queue_status", "queue_status"):
+                return cast(
+                    dict[str, Any],
+                    self._call_with_retry(self._cqlib.get_queue_status),
+                )
 
         raise TianyanAPIError(
             status_code=500,

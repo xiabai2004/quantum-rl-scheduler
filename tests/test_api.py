@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 
 # 检测 cqlib 是否可用（CI 环境可能未安装真机 SDK）
 try:
-    import cqlib  # noqa: F401
+    import cqlib
 
     _HAS_CQLIB = True
 except ImportError:
@@ -1157,6 +1157,124 @@ class TestTianyanClientCircuitBreaker(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 client.get_task_status("tid")
         self.assertEqual(client.get_circuit_state(), "closed")
+
+
+class TestTianyanClientConfigAndMetrics(unittest.TestCase):
+    """测试 TianyanClient 的可配置参数（Issue #74）与 Prometheus 指标埋点（Issue #73）。"""
+
+    def setUp(self):
+        """构造 Mock 模式客户端，避免依赖真实 API。"""
+        env = _env_without(
+            "TIANYAN_API_KEY",
+            "TIANYAN_MOCK_MODE",
+            "TIANYAN_MOCK_DELAY",
+            "TIANYAN_API_TIMEOUT",
+            "TIANYAN_API_MAX_RETRIES",
+            "TIANYAN_API_RETRY_DELAY",
+        )
+        with patch.dict(os.environ, env, clear=True), patch("src.api.tianyan_client.load_dotenv"):
+            self.client = TianyanClient(mock_mode=True)
+        self.client._mock_client = MagicMock()
+
+    def test_timeout_parameter(self):
+        """timeout 参数应可通过构造函数配置。"""
+        with patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(mock_mode=True, timeout=45.0)
+        self.assertEqual(client.timeout, 45.0)
+
+    def test_retry_parameter(self):
+        """max_retries 与 retry_delay 应可通过构造函数配置。"""
+        with patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(mock_mode=True, max_retries=10, retry_delay=0.5)
+        self.assertEqual(client.max_retries, 10)
+        self.assertEqual(client.retry_delay, 0.5)
+
+    def test_env_var_override(self):
+        """环境变量应覆盖默认的 timeout/max_retries/retry_delay。"""
+        env = _env_without(
+            "TIANYAN_API_KEY",
+            "TIANYAN_MOCK_MODE",
+            "TIANYAN_API_TIMEOUT",
+            "TIANYAN_API_MAX_RETRIES",
+            "TIANYAN_API_RETRY_DELAY",
+        )
+        env["TIANYAN_API_TIMEOUT"] = "60.0"
+        env["TIANYAN_API_MAX_RETRIES"] = "5"
+        env["TIANYAN_API_RETRY_DELAY"] = "2.0"
+        env["TIANYAN_MOCK_MODE"] = "true"
+        with patch.dict(os.environ, env, clear=True), patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(mock_mode=True)
+        self.assertEqual(client.timeout, 60.0)
+        self.assertEqual(client.max_retries, 5)
+        self.assertEqual(client.retry_delay, 2.0)
+
+    def test_metrics_recorded(self):
+        """API 调用应递增 Prometheus 请求计数指标。"""
+        from prometheus_client import REGISTRY
+
+        self.client._mock_client.authenticate.return_value = True
+        before = REGISTRY.get_sample_value(
+            "tianyan_api_requests_total",
+            {"method": "authenticate", "endpoint": "auth"},
+        )
+        before = before if before is not None else 0
+        self.client.authenticate()
+        after = REGISTRY.get_sample_value(
+            "tianyan_api_requests_total",
+            {"method": "authenticate", "endpoint": "auth"},
+        )
+        after = after if after is not None else 0
+        self.assertGreater(after, before)
+
+    def test_metrics_error_counter(self):
+        """API 调用失败时应递增 Prometheus 错误计数指标。"""
+        from prometheus_client import REGISTRY
+
+        self.client._mock_client.list_backends.side_effect = RuntimeError("boom")
+        before = REGISTRY.get_sample_value(
+            "tianyan_api_errors_total",
+            {
+                "method": "list_backends",
+                "endpoint": "backends",
+                "error_type": "RuntimeError",
+            },
+        )
+        before = before if before is not None else 0
+        with self.assertRaises(RuntimeError):
+            self.client.list_backends()
+        after = REGISTRY.get_sample_value(
+            "tianyan_api_errors_total",
+            {
+                "method": "list_backends",
+                "endpoint": "backends",
+                "error_type": "RuntimeError",
+            },
+        )
+        after = after if after is not None else 0
+        self.assertGreater(after, before)
+
+    def test_retry_behavior(self):
+        """API 调用失败时应按 max_retries 进行重试。"""
+        env = _env_without("TIANYAN_API_KEY", "TIANYAN_MOCK_MODE")
+        env["TIANYAN_MACHINE"] = "tianyan_s"
+        with patch.dict(os.environ, env, clear=True), patch("src.api.tianyan_client.load_dotenv"):
+            client = TianyanClient(
+                api_key="fake-key", mock_mode=False, max_retries=2, retry_delay=0.01
+            )
+        client._cqlib = MagicMock()
+        call_count = {"n": 0}
+
+        def _flaky(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] <= 2:
+                raise RuntimeError("transient")
+            return [{"name": "tianyan_s"}]
+
+        client._cqlib.list_backends.side_effect = _flaky
+        with patch("time.sleep"):
+            result = client.list_backends()
+        self.assertEqual(result, [{"name": "tianyan_s"}])
+        self.assertEqual(call_count["n"], 3)
 
 
 if __name__ == "__main__":

@@ -161,6 +161,29 @@ async def test_get_metrics(async_client):
     assert "quantum_scheduler_avg_wait_time" in text
 
 
+def test_metrics_endpoint():
+    """GET /metrics 应返回 Prometheus 文本格式指标，content-type 含 text/plain。
+
+    使用 FastAPI TestClient 测试标准 Prometheus 采集端点。
+    """
+
+    async def _noop_simulate():
+        """空操作后台任务，供 lifespan 创建后立即完成。"""
+        return None
+
+    with (
+        patch.object(app_module, "simulate_scheduler", _noop_simulate),
+        TestClient(app) as client,
+    ):
+        resp = client.get("/metrics")
+        assert resp.status_code == 200
+        content_type = resp.headers.get("content-type", "")
+        assert "text/plain" in content_type
+        # python_info 是 prometheus_client 默认暴露的进程指标
+        body = resp.text
+        assert "python_info" in body or "scheduler_" in body
+
+
 @pytest.mark.asyncio
 async def test_switch_strategy_valid(async_client):
     """POST /api/strategy?strategy=FCFS 应切换成功并更新当前策略。"""

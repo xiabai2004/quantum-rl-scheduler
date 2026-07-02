@@ -168,9 +168,9 @@ def setup_logging(
             level=log_level,
         )
     else:
-        # 文本格式：人类可读（使用 sys.stderr 避免 print）
+        # 文本格式：人类可读（动态访问 sys.stderr，支持 redirect_stderr 测试）
         logger.add(
-            sink=sys.stderr,
+            sink=lambda message: sys.stderr.write(message),
             level=log_level,
             format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
         )

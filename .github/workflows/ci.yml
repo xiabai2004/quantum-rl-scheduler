@@ -143,3 +143,36 @@ jobs:
             --show-error-codes \
             --pretty \
             || echo "[INFO] mypy found type issues — review and fix incrementally"
+
+  # ---------------------------------------------------------------------------
+  # Job 4: 依赖安全审计（pip-audit）
+  # 自动扫描 requirements.txt 中的依赖项，检测已知漏洞（CVE/GHSA）
+  # 注：初次启用 continue-on-error: true，避免历史依赖的已知漏洞阻塞流水线
+  #     待团队修复或确认误报后，可移除该字段以强制阻断
+  # 注：项目中暂无 requirements-dev.txt，开发依赖安全审计待后续补充
+  # ---------------------------------------------------------------------------
+  security-audit:
+    name: "Dependency Security Audit (pip-audit)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: lint
+    continue-on-error: true  # 初期允许失败：历史依赖可能存在已知漏洞，逐步修复后再强制
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pip-audit
+        run: |
+          pip install --upgrade pip
+          pip install pip-audit
+
+      - name: Run pip-audit on requirements.txt
+        run: |
+          # 扫描全部依赖；--ignore-vuln 用于跳过已确认的误报（按需补充 GHSA-ID）
+          pip-audit -r requirements.txt \
+            --ignore-vuln GHSA-xxxx \
+            --desc
