@@ -445,7 +445,7 @@ def _get_real_machines_status() -> list[dict]:
         return []
     try:
         return client.list_backends()  # type: ignore[no-any-return]
-    except (RuntimeError, ConnectionError, TimeoutError) as e:
+    except Exception as e:  # 防御性错误边界：cqlib 任意异常均需优雅降级为空列表
         logger.error(f"[Web] 查询真机状态失败: {e}")
         return []
 
