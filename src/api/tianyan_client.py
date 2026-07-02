@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from src.exceptions import CircuitOpenError
+from src.utils.alerts import alert_error
 from src.utils.metrics import (
     api_calls,
     api_errors,
@@ -31,6 +32,25 @@ from src.utils.metrics import (
 )
 
 T = TypeVar("T")
+
+
+def mask_token(token: str) -> str:
+    """对 API 令牌进行脱敏处理，仅保留首尾各 4 个字符。
+
+    用于日志输出时隐藏完整令牌，防止敏感信息泄露。
+    短令牌（≤8 字符）全部以 * 替换；空字符串原样返回。
+
+    Args:
+        token: 原始令牌字符串
+
+    Returns:
+        脱敏后的字符串，例如 ``"abcd****wxyz"``；空字符串返回 ``""``
+    """
+    if not token:
+        return ""
+    if len(token) <= 8:
+        return "*" * len(token)
+    return f"{token[:4]}{'*' * (len(token) - 8)}{token[-4:]}"
 
 
 class CircuitState(Enum):
@@ -93,6 +113,10 @@ class CircuitBreaker:
         self.last_failure_time = monotonic()
         if self.failure_count >= self.failure_threshold:
             self.state = CircuitState.OPEN
+            alert_error(
+                "api",
+                f"API 熔断器打开（连续失败 {self.failure_count}/{self.failure_threshold}）",
+            )
 
     def get_state(self) -> str:
         """返回当前状态字符串"""
@@ -168,16 +192,22 @@ class TianyanClient:
         - ``retry_delay`` ← ``TIANYAN_API_RETRY_DELAY``（默认 1.0）
 
         Args:
-            api_key: API 密钥，若为 None 则从环境变量 ``TIANYAN_API_KEY`` 读取。
+            api_key: API 密钥，若为 None 则从环境变量 ``TIANYAN_API_KEY``
+                （或别名 ``TIANYAN_API_TOKEN``）读取。真实模式下若未提供且
+                环境变量也未配置，将抛出 ``ValueError``。
             base_url: API 基础 URL，若为 None 则从 ``config/config.yaml`` 读取。
             mock_mode: 是否使用 Mock 模式，None 表示自动检测。
             enable_circuit_breaker: 是否启用熔断器模式。
             timeout: 单次 API 请求超时时间（秒），默认 30.0，
                 可通过环境变量 ``TIANYAN_API_TIMEOUT`` 覆盖。
-            max_retries: API 请求失败最大重试次数，默认 3，
+            max_retries: API 请求失败最大重试次数，默认 3,
                 可通过环境变量 ``TIANYAN_API_MAX_RETRIES`` 覆盖。
             retry_delay: 重试间隔（秒），默认 1.0，
                 可通过环境变量 ``TIANYAN_API_RETRY_DELAY`` 覆盖。
+
+        Raises:
+            ValueError: 真实模式下未提供 ``api_key`` 且环境变量
+                ``TIANYAN_API_KEY`` / ``TIANYAN_API_TOKEN`` 均未配置时。
         """
         # 按需加载 .env 文件中的环境变量
         load_dotenv()
@@ -223,11 +253,11 @@ class TianyanClient:
         # 真实模式：初始化真实 API 客户端
         self._mock_client = None
 
-        # 读取 api_key
-        self.api_key = api_key or os.getenv("TIANYAN_API_KEY", "")
-
-        if not self.api_key:
-            logger.warning("未配置 TIANYAN_API_KEY，API 调用将无法通过认证")
+        # 加载 API 凭证（必需，缺失则抛出 ValueError）
+        creds = self._load_credentials(api_key=api_key)
+        self.api_key = creds["api_key"]
+        # 仅记录脱敏后的密钥，避免敏感信息泄露到日志
+        logger.info(f"已加载 API 密钥: {mask_token(self.api_key)}")
 
         # 读取 base_url（从配置文件回退）
         self.base_url = base_url or self._load_base_url_from_config()
@@ -235,19 +265,18 @@ class TianyanClient:
 
         # 真实模式统一走 cqlib SDK（REST API 被 WAF 拦截，已弃用）
         machine_name = os.getenv("TIANYAN_MACHINE", "tianyan_s")
-        if self.api_key:
-            try:
-                from src.api.tianyan_cqlib import CqlibTianyanClient
+        try:
+            from src.api.tianyan_cqlib import CqlibTianyanClient
 
-                self._cqlib = CqlibTianyanClient(
-                    login_key=self.api_key,
-                    machine_name=machine_name,
-                    auto_retry_machine=True,
-                )
-                logger.info(f"✅ 真实模式委托 cqlib（机器={machine_name}）")
-            except Exception as e:
-                # 涉及 cqlib SDK 导入与初始化，异常类型无法穷举，保留宽捕获并记录日志
-                logger.warning(f"cqlib 客户端初始化失败: {e}，回退 REST 路径")
+            self._cqlib = CqlibTianyanClient(
+                login_key=self.api_key,
+                machine_name=machine_name,
+                auto_retry_machine=True,
+            )
+            logger.info(f"✅ 真实模式委托 cqlib（机器={machine_name}）")
+        except Exception as e:
+            # 涉及 cqlib SDK 导入与初始化，异常类型无法穷举，保留宽捕获并记录日志
+            logger.warning(f"cqlib 客户端初始化失败: {e}，回退 REST 路径")
 
         self.session = None
 
@@ -282,6 +311,51 @@ class TianyanClient:
             # YAML 解析失败、文件读取失败或配置结构异常时，默认使用 Mock 模式
             logger.debug(f"读取 mock_mode 配置失败: {e}，默认使用 Mock 模式")
             return True  # 默认使用 Mock 模式
+
+    @staticmethod
+    def _load_credentials(api_key: str | None = None) -> dict[str, str]:
+        """从环境变量加载 API 凭证
+
+        按优先级读取凭证：显式传参 > 环境变量。对于敏感字段（密钥/令牌）
+        不提供任何默认值，缺失时抛出 ``ValueError`` 以便上层显式处理。
+
+        读取的凭证变量：
+        - ``TIANYAN_API_KEY``：天衍云 API 密钥（必需，别名 ``TIANYAN_API_TOKEN``）
+        - ``TIANYAN_API_SECRET``：API 密钥对应的 Secret（可选）
+        - ``TIANYAN_APP_ID``：应用 ID（可选）
+
+        Args:
+            api_key: 显式传入的 API 密钥，优先于环境变量
+
+        Returns:
+            凭证字典，至少包含 ``api_key`` 字段；可选字段仅在环境变量设置时出现
+
+        Raises:
+            ValueError: 当必需的 API 密钥既未显式传入、也未在环境变量中配置时
+        """
+        credentials: dict[str, str] = {}
+
+        # API Key（必需）：显式传参 > TIANYAN_API_KEY > TIANYAN_API_TOKEN（别名）
+        key = api_key or os.getenv("TIANYAN_API_KEY") or os.getenv("TIANYAN_API_TOKEN")
+        if not key:
+            raise ValueError(
+                "未配置天衍云 API 密钥：请设置环境变量 TIANYAN_API_KEY"
+                "（或别名 TIANYAN_API_TOKEN）后再启动真实模式，"
+                "或在初始化 TianyanClient 时显式传入 api_key 参数。"
+            )
+        credentials["api_key"] = key
+
+        # API Secret（可选）：仅当环境变量设置时才使用，不提供默认值
+        secret = os.getenv("TIANYAN_API_SECRET")
+        if secret:
+            credentials["api_secret"] = secret
+
+        # App ID（可选）：仅当环境变量设置时才使用，不提供默认值
+        app_id = os.getenv("TIANYAN_APP_ID")
+        if app_id:
+            credentials["app_id"] = app_id
+
+        return credentials
 
     @staticmethod
     def _load_base_url_from_config(config_path: str = "config/config.yaml") -> str:

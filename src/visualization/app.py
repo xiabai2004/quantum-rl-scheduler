@@ -22,7 +22,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Response, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import HTMLResponse
 from loguru import logger
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -42,21 +50,28 @@ if str(_PROJECT_ROOT) not in sys.path:
 class TaskSubmit(BaseModel):
     """提交新任务的请求体"""
 
-    user_id: str = Field(default="user_001", description="用户ID")
-    task_type: str = Field(default="quantum", description="任务类型: quantum/classical/hybrid")
+    user_id: str = Field(default="user_001", min_length=1, max_length=128, description="用户ID")
+    task_type: str = Field(
+        default="quantum",
+        min_length=1,
+        max_length=32,
+        description="任务类型: quantum/classical/hybrid",
+    )
     priority: int = Field(default=3, ge=1, le=5, description="优先级 1-5")
-    qubit_count: int = Field(default=10, ge=1, description="所需量子比特数")
-    circuit_depth: int = Field(default=100, ge=1, description="电路深度")
-    estimated_time: float = Field(default=60.0, ge=0.1, description="预计执行时间(秒)")
+    qubit_count: int = Field(default=10, ge=1, le=287, description="所需量子比特数")
+    circuit_depth: int = Field(default=100, ge=1, le=10000, description="电路深度")
+    estimated_time: float = Field(
+        default=60.0, ge=0.1, le=86400.0, description="预计执行时间(秒)"
+    )
 
 
 class SystemStatusUpdate(BaseModel):
     """系统状态更新请求体（供调度引擎调用）"""
 
     qubit_utilization: float = Field(default=0.0, ge=0.0, le=1.0)
-    queue_length: int = Field(default=0, ge=0)
-    completed_tasks: int = Field(default=0, ge=0)
-    average_wait_time: float = Field(default=0.0, ge=0.0)
+    queue_length: int = Field(default=0, ge=0, le=100000)
+    completed_tasks: int = Field(default=0, ge=0, le=10**9)
+    average_wait_time: float = Field(default=0.0, ge=0.0, le=86400.0)
 
 
 # ============================================================
@@ -171,6 +186,27 @@ app = FastAPI(title="量子RL调度系统监控界面", version="1.0.0", lifespa
 
 
 # ============================================================
+# 认证层：基于 X-API-Key 的可选 API 密钥认证
+# ============================================================
+
+
+async def verify_api_key(x_api_key: str | None = Header(None)) -> None:
+    """验证 API 密钥。未配置 VISUALIZATION_API_KEY 时禁用认证。
+
+    通过环境变量 ``VISUALIZATION_API_KEY`` 配置期望密钥：
+    - 未配置（None 或空字符串）：认证禁用，所有请求放行（开发模式）。
+    - 已配置：请求头 ``X-API-Key`` 必须与配置值完全匹配，否则返回 401。
+    """
+    expected_key = os.getenv("VISUALIZATION_API_KEY")
+    if not expected_key:
+        # 未配置密钥，认证禁用（开发环境）
+        return
+    if x_api_key != expected_key:
+        logger.warning("[Web] API 密钥认证失败：X-API-Key 缺失或不匹配")
+        raise HTTPException(status_code=401, detail="无效的 API 密钥")
+
+
+# ============================================================
 # 页面路由：返回监控面板 HTML
 # ============================================================
 
@@ -253,7 +289,7 @@ async def get_tasks(status: str | None = None) -> list[dict]:
 
 
 @app.post("/api/tasks")
-async def submit_task(task: TaskSubmit) -> dict:
+async def submit_task(task: TaskSubmit, _auth: None = Depends(verify_api_key)) -> dict:
     """提交新任务"""
     new_task = {
         "task_id": "QTASK-" + uuid.uuid4().hex[:8],
@@ -319,7 +355,9 @@ async def metrics() -> Response:
 
 
 @app.post("/api/strategy")
-async def switch_strategy(strategy: str) -> dict:
+async def switch_strategy(
+    strategy: str, _auth: None = Depends(verify_api_key)
+) -> dict:
     """切换调度策略"""
     if strategy not in system_status["strategy_options"]:
         return {"message": f"未知策略: {strategy}", "success": False}
@@ -338,7 +376,9 @@ async def switch_strategy(strategy: str) -> dict:
 
 
 @app.post("/api/update")
-async def update_status(update: SystemStatusUpdate) -> dict:
+async def update_status(
+    update: SystemStatusUpdate, _auth: None = Depends(verify_api_key)
+) -> dict:
     """更新系统状态（供调度引擎调用）"""
     system_status["qubit_utilization"] = update.qubit_utilization
     system_status["queue_length"] = update.queue_length

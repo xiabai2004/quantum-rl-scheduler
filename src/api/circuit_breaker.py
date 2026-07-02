@@ -71,6 +71,7 @@ from typing import Any, TypeVar
 from loguru import logger
 
 from src.exceptions import CircuitOpenError
+from src.utils.alerts import alert_critical
 
 __all__ = ["CircuitBreaker", "CircuitState"]
 
@@ -271,6 +272,10 @@ class CircuitBreaker:
                 self.state = CircuitState.OPEN
             elif self.state == CircuitState.CLOSED and self.failure_count >= self.failure_threshold:
                 self.state = CircuitState.OPEN
+                alert_critical(
+                    "circuit_breaker",
+                    f"熔断器 CLOSED→OPEN（连续失败 {self.failure_count}/{self.failure_threshold}）",
+                )
             raise
 
         # 成功：HALF_OPEN 试探通过则重置，CLOSED 则清零连续失败计数
