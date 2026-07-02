@@ -252,6 +252,16 @@ DEFAULT_MACHINE_CONFIGS: list[dict[str, Any]] = [
 # 真机提交抽样概率（控制真机机时消耗：每个量子任务以此概率真正上真机）
 REAL_SUBMIT_PROBABILITY_DEFAULT = 0.0
 
+# 真机闭环反馈参数（Issue #64）
+# 真机任务成功完成时的奖励加成（叠加到 step reward）
+REAL_MACHINE_SUCCESS_BONUS = 2.0
+# 真机任务失败时的惩罚（叠加到 step reward）
+REAL_MACHINE_FAIL_PENALTY = -1.0
+# 连续失败次数达到阈值后自动降级到 Mock（避免持续消耗机时）
+REAL_MACHINE_DEGRADE_FAIL_THRESHOLD = 3
+# 单个真机任务结果轮询的最大次数（超过则视为超时失败）
+REAL_MACHINE_MAX_POLL_STEPS = 20
+
 
 # ---------------------------------------------------------------------------
 # 核心环境类
@@ -296,6 +306,8 @@ class QuantumSchedulingEnv(gym.Env):
         seed: int | None = None,
         machine_configs: list[dict[str, Any]] | None = None,
         real_submit_probability: float = REAL_SUBMIT_PROBABILITY_DEFAULT,
+        use_real_machine: bool = False,
+        real_machine_feedback_weight: float = 1.0,
     ):
         """
         初始化量子任务调度环境。
@@ -310,6 +322,15 @@ class QuantumSchedulingEnv(gym.Env):
             real_submit_probability : 当机器 is_real=True 且已 attach 真实客户端时，
                                       每个量子任务以此概率真正提交真机（控制机时消耗）。
                                       0.0 表示纯仿真，1.0 表示每次都上真机。
+            use_real_machine        : 是否启用真机闭环模式（Issue #64）。True 时：
+                                      1) 量子任务在 step() 中以 real_submit_probability
+                                         概率非阻塞提交真机；
+                                      2) 后续 step() 轮询已提交任务的结果，将成功/失败
+                                         反馈叠加到 reward；
+                                      3) 真机连续失败超过阈值时自动降级到 Mock。
+            real_machine_feedback_weight : 真机结果反馈到 reward 的权重系数，
+                                           默认 1.0（即按 REAL_MACHINE_SUCCESS_BONUS /
+                                           REAL_MACHINE_FAIL_PENALTY 全额叠加）。
         """
         super().__init__()
 
@@ -317,6 +338,8 @@ class QuantumSchedulingEnv(gym.Env):
         self.max_qubits = max_qubits
         self.render_mode = render_mode
         self.real_submit_probability = float(real_submit_probability)
+        self.use_real_machine = bool(use_real_machine)
+        self.real_machine_feedback_weight = float(real_machine_feedback_weight)
 
         # Gymnasium 标准空间定义（保持 10 维 obs + Discrete(3) 不变，确保 PPO 模型可复用）
         self.observation_space = spaces.Box(
@@ -350,6 +373,19 @@ class QuantumSchedulingEnv(gym.Env):
 
         # 真机客户端映射：machine_name -> client（由 attach_real_clients 注入）
         self._real_clients: dict[str, Any] = {}
+
+        # 真机闭环状态（Issue #64）
+        # _pending_real_tasks: 已提交但未拿到结果的真机任务列表
+        #   每项格式: {"task_id": str, "machine_name": str, "submit_step": int,
+        #             "poll_count": int, "task_id_str": str}
+        self._pending_real_tasks: list[dict[str, Any]] = []
+        # 真机降级标志：True 时跳过所有真机提交（fallback 到 Mock）
+        self._real_machine_degraded: bool = False
+        # 连续失败计数（用于触发降级）
+        self._real_consecutive_failures: int = 0
+        # 真机结果统计（用于 info 字典和报告）
+        self._real_success_count: int = 0
+        self._real_fail_count: int = 0
 
         # 内部状态
         self._current_step: int = 0
@@ -422,6 +458,32 @@ class QuantumSchedulingEnv(gym.Env):
         return self._current_task
 
     # ------------------------------------------------------------------
+    # 真机闭环：降级判断与状态查询（Issue #64）
+    # ------------------------------------------------------------------
+
+    def is_real_machine_degraded(self) -> bool:
+        """返回真机是否已降级到 Mock。
+
+        Returns:
+            bool: True 表示真机不可用，已自动降级
+        """
+        return self._real_machine_degraded
+
+    def get_real_machine_stats(self) -> dict[str, Any]:
+        """返回真机闭环统计信息（供 info 字典和报告使用）。
+
+        Returns:
+            包含 pending/success/fail/degraded 等字段的字典
+        """
+        return {
+            "pending_count": len(self._pending_real_tasks),
+            "success_count": self._real_success_count,
+            "fail_count": self._real_fail_count,
+            "degraded": self._real_machine_degraded,
+            "consecutive_failures": self._real_consecutive_failures,
+        }
+
+    # ------------------------------------------------------------------
     # reset()
     # ------------------------------------------------------------------
 
@@ -466,6 +528,15 @@ class QuantumSchedulingEnv(gym.Env):
         self._last_selected_machine = None
         self._machine_schedule_count = {m.name: 0 for m in self._machines}
         self._machine_real_submits = {m.name: 0 for m in self._machines}
+
+        # 重置真机闭环状态（Issue #64）
+        # 注意：degraded 标志在 episode 间不重置，一旦降级则整个训练过程保持降级
+        # （避免对已知不可用的真机反复探测）；如需重新探测，请创建新环境实例
+        self._pending_real_tasks = []
+        self._real_success_count = 0
+        self._real_fail_count = 0
+        # episode 间重置连续失败计数，给真机一次“恢复”机会
+        self._real_consecutive_failures = 0
 
         # 随机初始化任务队列（5-20 个任务）
         self._task_queue = []
@@ -634,6 +705,14 @@ class QuantumSchedulingEnv(gym.Env):
         # 鼓励策略在合适的时候把任务送到量子资源上。
         if self._quantum.available_ratio > (1.0 - QUBIT_UTIL_THRESHOLD):
             reward += REWARD_LOW_QUBIT_UTIL
+
+        # ---- 真机闭环反馈（Issue #64） ----
+        # 非阻塞轮询已提交的真机任务结果，将成功/失败反馈叠加到 reward。
+        # 这是真机闭环的核心：真机结果真正影响 RL 训练信号，使策略学到
+        # “真机可用时优先用真机，真机不可用时降级到仿真”。
+        if self.use_real_machine and self._pending_real_tasks:
+            real_feedback = self._poll_pending_real_tasks()
+            reward += real_feedback
 
         # ---- 推进仿真时间 ----
         self._advance_time(rng)
@@ -932,15 +1011,23 @@ class QuantumSchedulingEnv(gym.Env):
             self._submit_to_real_machine(machine, task)
 
     def _submit_to_real_machine(self, machine: QuantumMachine, task: Task) -> None:
-        """向真机提交一个量子任务（异常安全，失败仅记录日志）。
+        """向真机提交一个量子任务（非阻塞，异常安全）。
 
-        真机提交在仿真循环中是非阻塞的：提交后不等待结果，仅计入
-        真机提交计数，避免阻塞 RL 训练。结果可在 demo 脚本中单独轮询。
+        真机提交在仿真循环中是非阻塞的：提交后立即返回 task_id 并登记到
+        ``_pending_real_tasks``，后续 step() 通过 ``_poll_pending_real_tasks``
+        轮询结果，避免阻塞 RL 训练。
+
+        降级机制（Issue #64）：当 ``_real_machine_degraded=True`` 时跳过提交，
+        真机不可用时自动 fallback 到 Mock（仅计入仿真统计）。
 
         Args:
             machine: 目标真机
             task:    待提交任务
         """
+        # 降级保护：已知真机不可用时直接返回，不再消耗机时
+        if self._real_machine_degraded:
+            return
+
         client = self._real_clients.get(machine.name)
         if client is None:
             return
@@ -948,7 +1035,7 @@ class QuantumSchedulingEnv(gym.Env):
         # 真实场景下应由 parser 从 task 生成 QCIS，这里用占位电路做连通性验证
         qcis = getattr(task, "qcis", None) or "H Q0\nM Q0"
         try:
-            client.submit_quantum_task(
+            real_task_id = client.submit_quantum_task(
                 qcis=qcis,
                 shots=512,
                 task_name=f"RL_{task.task_id}",
@@ -956,10 +1043,130 @@ class QuantumSchedulingEnv(gym.Env):
             self._machine_real_submits[machine.name] = (
                 self._machine_real_submits.get(machine.name, 0) + 1
             )
+            # 登记到 pending 列表，后续轮询结果（Issue #64）
+            # real_task_id 为 None 表示提交被拒绝（如机器校准中），计入失败
+            if real_task_id is not None:
+                self._pending_real_tasks.append(
+                    {
+                        "task_id": str(real_task_id),
+                        "machine_name": machine.name,
+                        "submit_step": self._current_step,
+                        "poll_count": 0,
+                        "task_id_str": str(task.task_id),
+                    }
+                )
+                if self.use_real_machine:
+                    logger.debug(
+                        f"[真机闭环] 任务 {task.task_id} 已提交 {machine.name} "
+                        f"(real_task_id={real_task_id})，等待结果轮询"
+                    )
+            else:
+                # 提交被拒绝（非异常），计入失败并触发降级判断
+                self._record_real_failure(machine.name, "提交被拒绝（返回 None）")
         except Exception as e:
             # 真机 API 提交可能因网络/认证/服务端等多种原因失败，无法精确收窄
             logger.error(f"[真机] {machine.name} 提交失败: {e}")
             self._render_log.append(f"[真机] {machine.name} 提交失败: {str(e)[:60]}")
+            self._record_real_failure(machine.name, f"提交异常: {str(e)[:60]}")
+
+    def _record_real_failure(self, machine_name: str, reason: str) -> None:
+        """记录一次真机失败，并在达到阈值时触发降级（Issue #64）。
+
+        Args:
+            machine_name: 失败的机器名
+            reason       : 失败原因（用于日志）
+        """
+        self._real_fail_count += 1
+        self._real_consecutive_failures += 1
+        if (
+            self._real_consecutive_failures >= REAL_MACHINE_DEGRADE_FAIL_THRESHOLD
+            and not self._real_machine_degraded
+        ):
+            self._real_machine_degraded = True
+            logger.warning(
+                f"[真机闭环] 连续失败 {self._real_consecutive_failures} 次，"
+                f"已自动降级到 Mock 模式（最后失败: {machine_name} - {reason}）"
+            )
+            self._render_log.append(
+                f"[真机闭环] 已降级到 Mock（连续失败 {self._real_consecutive_failures} 次）"
+            )
+
+    def _poll_pending_real_tasks(self) -> float:
+        """非阻塞轮询已提交真机任务的结果，返回本步反馈 reward（Issue #64）。
+
+        遍历 ``_pending_real_tasks``，对每个任务调用 ``get_task_status`` 查询状态：
+            - completed : 计入成功，返回 REAL_MACHINE_SUCCESS_BONUS
+            - error     : 计入失败，返回 REAL_MACHINE_FAIL_PENALTY，触发降级判断
+            - timeout   : 轮询次数超过 REAL_MACHINE_MAX_POLL_STEPS，视为超时失败
+            - running/unknown : poll_count +1，保留在 pending 列表
+
+        所有反馈乘以 ``real_machine_feedback_weight`` 后累加返回。
+
+        Returns:
+            本步真机反馈 reward（正为成功加成，负为失败惩罚，0 表示无新结果）
+        """
+        if not self._pending_real_tasks:
+            return 0.0
+
+        total_feedback = 0.0
+        still_pending: list[dict[str, Any]] = []
+
+        for pending in self._pending_real_tasks:
+            pending["poll_count"] += 1
+            machine_name = pending["machine_name"]
+            real_task_id = pending["task_id"]
+            task_id_str = pending["task_id_str"]
+            client = self._real_clients.get(machine_name)
+
+            # 客户端丢失（理论上不应发生），视为失败
+            if client is None:
+                total_feedback += REAL_MACHINE_FAIL_PENALTY * self.real_machine_feedback_weight
+                self._record_real_failure(machine_name, "客户端丢失")
+                continue
+
+            try:
+                status = client.get_task_status(real_task_id)
+            except Exception as e:
+                # 查询异常视为本步未拿到结果，保留在 pending 列表
+                logger.debug(f"[真机闭环] 查询 {real_task_id} 异常: {e}")
+                still_pending.append(pending)
+                continue
+
+            status_str = str(status.get("status", "unknown"))
+
+            if status_str == "completed":
+                # 真机成功：正向反馈
+                total_feedback += (
+                    REAL_MACHINE_SUCCESS_BONUS * self.real_machine_feedback_weight
+                )
+                self._real_success_count += 1
+                self._real_consecutive_failures = 0  # 成功重置连续失败计数
+                logger.debug(
+                    f"[真机闭环] 任务 {task_id_str} 真机执行成功 "
+                    f"(machine={machine_name}, real_task_id={real_task_id})"
+                )
+            elif status_str == "error":
+                # 真机失败：负向反馈 + 降级判断
+                total_feedback += (
+                    REAL_MACHINE_FAIL_PENALTY * self.real_machine_feedback_weight
+                )
+                self._record_real_failure(machine_name, "任务状态=error")
+            elif pending["poll_count"] >= REAL_MACHINE_MAX_POLL_STEPS:
+                # 超时：视为失败
+                total_feedback += (
+                    REAL_MACHINE_FAIL_PENALTY * self.real_machine_feedback_weight
+                )
+                self._record_real_failure(machine_name, "轮询超时")
+                logger.debug(
+                    f"[真机闭环] 任务 {task_id_str} 轮询超时 "
+                    f"(poll_count={pending['poll_count']})"
+                )
+            else:
+                # 仍在运行，保留到下一步轮询
+                still_pending.append(pending)
+
+        self._pending_real_tasks = still_pending
+        return total_feedback
 
     def _recompute_aggregate(self) -> None:
         """根据所有机器状态重算 self._quantum 聚合视图。
@@ -1276,6 +1483,9 @@ class QuantumSchedulingEnv(gym.Env):
             "last_selected_machine": self._last_selected_machine,
             "machine_schedule_count": dict(self._machine_schedule_count),
             "machine_real_submits": dict(self._machine_real_submits),
+            # 真机闭环统计（Issue #64）
+            "real_machine_degraded": self._real_machine_degraded,
+            "real_machine_stats": self.get_real_machine_stats(),
             "machines": [
                 {
                     "name": m.name,
