@@ -22,9 +22,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from loguru import logger
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
 # 确保项目根目录在 Python 路径中
@@ -305,6 +306,16 @@ async def get_metrics() -> str:
         f"quantum_scheduler_current_step {system_status['current_step']}",
     ]
     return "\n".join(lines)
+
+
+@app.get("/metrics", tags=["监控"])
+async def metrics() -> Response:
+    """Prometheus 指标端点，供 Prometheus 采集器抓取。
+
+    返回 prometheus_client 默认注册表中所有指标的 Prometheus 文本格式输出，
+    采集器（Prometheus server）可通过该端点定期拉取监控数据。
+    """
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.post("/api/strategy")

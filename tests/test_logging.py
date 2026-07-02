@@ -17,7 +17,7 @@ import os
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -163,9 +163,9 @@ class TestSetupLoggingFormat(unittest.TestCase):
             lg = setup_logging(log_dir=tmp, log_level="INFO")
             try:
                 self.assertIsNotNone(lg)
-                # 捕获 stdout 验证输出为文本（非 JSON）
+                # 捕获 stderr 验证输出为文本（非 JSON）
                 buf = io.StringIO()
-                with redirect_stdout(buf):
+                with redirect_stderr(buf):
                     lg.info("text mode message")
                 output = buf.getvalue().strip()
 
@@ -246,7 +246,7 @@ class TestSetupLoggingFormat(unittest.TestCase):
             lg = setup_logging(log_dir=tmp, log_level="INFO")
             try:
                 buf = io.StringIO()
-                with redirect_stdout(buf):
+                with redirect_stderr(buf):
                     lg.info("fallback text")
                 output = buf.getvalue().strip()
 

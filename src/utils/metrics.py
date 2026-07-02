@@ -13,7 +13,9 @@ __all__ = [
     "active_connections",
     "annealing_iterations",
     "api_calls",
+    "api_errors",
     "api_latency",
+    "api_request_duration",
     "circuit_breaker_state",
     "qubit_utilization",
     "queue_length",
@@ -21,6 +23,7 @@ __all__ = [
     "record_scheduled_task",
     "task_wait_time",
     "tasks_scheduled",
+    "tianyan_cb_state",
 ]
 
 
@@ -39,13 +42,26 @@ task_wait_time = Histogram(
 )
 
 # ===== API 调用指标 =====
-# 按端点与状态统计天衍云 API 请求总数
+# 按方法与端点统计天衍云 API 请求总数
 api_calls = Counter(
     "tianyan_api_requests_total",
     "Total API requests",
-    ["endpoint", "status"],
+    ["method", "endpoint"],
 )
-# 天衍云 API 调用延迟分布（秒）
+# 天衍云 API 请求耗时分布（秒），按方法与端点维度
+api_request_duration = Histogram(
+    "tianyan_api_request_duration_seconds",
+    "API request duration in seconds",
+    ["method", "endpoint"],
+    buckets=[0.1, 0.5, 1, 5, 10, 30, 60, 120],
+)
+# 天衍云 API 错误总数，按方法、端点与错误类型统计
+api_errors = Counter(
+    "tianyan_api_errors_total",
+    "Total API errors",
+    ["method", "endpoint", "error_type"],
+)
+# 保留旧版延迟直方图（向后兼容，无标签）
 api_latency = Histogram(
     "tianyan_api_latency_seconds",
     "API call latency",
@@ -81,20 +97,25 @@ circuit_breaker_state = Gauge(
     "circuit_breaker_state",
     "Circuit breaker state (0=closed, 1=open, 2=half_open)",
 )
+# 天衍云客户端熔断器状态（0=closed, 1=open, 2=half_open）
+tianyan_cb_state = Gauge(
+    "tianyan_circuit_breaker_state",
+    "Tianyan client circuit breaker state (0=closed, 1=open, 2=half_open)",
+)
 
 
-def record_api_call(endpoint: str, status: str, latency: float) -> None:
+def record_api_call(method: str, endpoint: str, latency: float) -> None:
     """记录一次 API 调用
 
     同时更新 API 请求计数器与延迟直方图。
 
     Args:
-        endpoint: API 端点名称（如 "submit_task"）
-        status: 调用状态（如 "success" / "error"）
+        method: 调用方法名称（如 "submit_quantum_task"）
+        endpoint: API 端点名称（如 "quantum_task"）
         latency: 调用耗时（秒）
     """
-    api_calls.labels(endpoint=endpoint, status=status).inc()
-    api_latency.observe(latency)
+    api_calls.labels(method=method, endpoint=endpoint).inc()
+    api_request_duration.labels(method=method, endpoint=endpoint).observe(latency)
 
 
 def record_scheduled_task(strategy: str, target: str, wait_seconds: float) -> None:
