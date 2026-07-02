@@ -57,9 +57,64 @@ def setup_logging(
 
 
 # 配置加载
+def _expand_env_vars_in_config(config: dict[str, Any]) -> dict[str, Any]:
+    """递归展开配置字典中所有 ``${VAR}`` / ``$VAR`` 环境变量引用。
+
+    Args:
+        config: 已解析的 YAML 配置字典
+
+    Returns:
+        展开后的配置字典（新 dict，不修改原对象）
+    """
+    result: dict[str, Any] = {}
+    for key, value in config.items():
+        if isinstance(value, dict):
+            result[key] = _expand_env_vars_in_config(value)
+        elif isinstance(value, list):
+            result[key] = [
+                _expand_env_vars_in_config(item) if isinstance(item, dict)
+                else os.path.expandvars(item) if isinstance(item, str)
+                else item
+                for item in value
+            ]
+        elif isinstance(value, str):
+            result[key] = os.path.expandvars(value)
+        else:
+            result[key] = value
+    return result
+
+
+def _warn_unexpanded_vars(config: dict[str, Any], prefix: str = "") -> None:
+    """遍历配置字典，对残留 ``${...}`` 发出警告。
+
+    环境变量未设置时 ``os.path.expandvars()`` 不会修改字符串，
+    此函数负责提醒开发者补齐缺失变量。
+
+    Args:
+        config: 展开后的配置字典
+        prefix: 当前上下文路径（递归用）
+    """
+    for key, value in config.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            _warn_unexpanded_vars(value, path)
+        elif isinstance(value, str) and "${" in value:
+            logger.warning(f"配置项 '{path}' 存在未展开的环境变量: '{value}'")
+        elif isinstance(value, list):
+            for i, item in enumerate(value):
+                if isinstance(item, dict):
+                    _warn_unexpanded_vars(item, f"{path}[{i}]")
+                elif isinstance(item, str) and "${" in item:
+                    logger.warning(
+                        f"配置项 '{path}[{i}]' 存在未展开的环境变量: '{item}'"
+                    )
+
+
 def load_config(config_path: str = "config/config.yaml") -> dict[str, Any]:
     """
-    加载配置文件
+    加载配置文件，自动展开 ``${VAR_NAME}`` 环境变量引用。
+
+    环境变量未设置时，``${...}`` 会保留为原始字面量并发出警告。
 
     Args:
         config_path: 配置文件路径
@@ -70,6 +125,9 @@ def load_config(config_path: str = "config/config.yaml") -> dict[str, Any]:
     try:
         with open(config_path, encoding="utf-8") as f:
             config = yaml.safe_load(f)
+        if isinstance(config, dict):
+            config = _expand_env_vars_in_config(config)
+            _warn_unexpanded_vars(config)
         logger.info(f"配置文件加载成功：{config_path}")
         return cast(dict[str, Any], config)
     except Exception as e:

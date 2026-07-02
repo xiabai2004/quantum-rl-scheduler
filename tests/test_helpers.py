@@ -129,6 +129,42 @@ class TestLoadConfig(unittest.TestCase):
             cfg = load_config(path)
             self.assertEqual(cfg, ["a", "b"])
 
+    def test_expands_env_vars_in_values(self):
+        """${VAR} 应被展开为环境变量的实际值。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "envcfg.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("auth:\n  key: ${TEST_CFG_KEY}\n  host: localhost\n")
+            os.environ["TEST_CFG_KEY"] = "secret-12345"
+            try:
+                cfg = load_config(path)
+                self.assertEqual(cfg["auth"]["key"], "secret-12345")
+                self.assertEqual(cfg["auth"]["host"], "localhost")
+            finally:
+                del os.environ["TEST_CFG_KEY"]
+
+    def test_expands_env_vars_recursively(self):
+        """嵌套字典中的 ${VAR} 也应被展开。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "deep.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("db:\n  conn:\n    url: ${TEST_DB_URL}\n")
+            os.environ["TEST_DB_URL"] = "postgres://localhost:5432"
+            try:
+                cfg = load_config(path)
+                self.assertEqual(cfg["db"]["conn"]["url"], "postgres://localhost:5432")
+            finally:
+                del os.environ["TEST_DB_URL"]
+
+    def test_preserves_unexpanded_vars(self):
+        """未设置的环境变量应保留为 ${...} 字面量（不崩溃）。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "unset.yaml")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("auth:\n  key: ${UNSET_VAR}\n")
+            cfg = load_config(path)
+            self.assertEqual(cfg["auth"]["key"], "${UNSET_VAR}")
+
 
 # ============================================================
 # save_config 测试

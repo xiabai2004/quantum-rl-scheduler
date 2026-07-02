@@ -16,7 +16,6 @@ from time import monotonic
 from typing import Any, cast
 
 import requests
-import yaml
 from dotenv import load_dotenv
 from loguru import logger
 
@@ -243,8 +242,9 @@ class TianyanClient:
 
         # 3. 配置文件
         try:
-            with open("config/config.yaml", encoding="utf-8") as f:
-                config = yaml.safe_load(f)
+            from src.utils.helpers import load_config as _load_cfg
+
+            config = _load_cfg("config/config.yaml")
             mock_config = config.get("tianyan", {}).get("mock_mode", True)
             return cast(bool, mock_config)
         except Exception:
@@ -262,8 +262,9 @@ class TianyanClient:
         """
         default_url = "https://api.tianyanyun.cn/v1"
         try:
-            with open(config_path, encoding="utf-8") as f:
-                config = yaml.safe_load(f)
+            from src.utils.helpers import load_config as _load_cfg
+
+            config = _load_cfg(config_path)
             url = config.get("tianyan", {}).get("base_url", default_url)
             return cast(str, url)
         except FileNotFoundError:
@@ -383,8 +384,9 @@ class TianyanClient:
             超时秒数
         """
         try:
-            with open("config/config.yaml", encoding="utf-8") as f:
-                config = yaml.safe_load(f)
+            from src.utils.helpers import load_config as _load_cfg
+
+            config = _load_cfg("config/config.yaml")
             return int(config.get("tianyan", {}).get("timeout", 30))
         except Exception:
             return 30
