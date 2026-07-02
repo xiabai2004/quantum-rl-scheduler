@@ -117,12 +117,16 @@ def setup_logging(
 
 
 # 配置加载
-def load_config(config_path: str = "config/config.yaml") -> dict[str, Any]:
+def load_config(
+    config_path: str = "config/config.yaml",
+    validate: bool = False,
+) -> dict[str, Any]:
     """
     加载配置文件，自动展开 ${VAR} 环境变量引用。
 
     Args:
         config_path: 配置文件路径
+        validate: 是否启用 Pydantic Schema 校验（默认 False）
 
     Returns:
         配置字典（环境变量已展开）
@@ -137,6 +141,15 @@ def load_config(config_path: str = "config/config.yaml") -> dict[str, Any]:
         # 对字典根元素检查是否残留未展开的 ${}
         if isinstance(expanded, dict):
             _warn_unresolved(expanded, source_path=config_path)
+
+        # 可选：Pydantic Schema 校验
+        if validate and isinstance(expanded, dict):
+            try:
+                from src.config.schema import validate_and_print
+
+                validate_and_print(expanded)
+            except ImportError:
+                logger.debug("跳过 Pydantic 校验（schema 模块不可用）")
 
         logger.info(f"配置文件加载成功：{config_path}")
         return cast(dict[str, Any], expanded)
