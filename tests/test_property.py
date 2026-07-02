@@ -61,7 +61,7 @@ class TestEnvProperty(unittest.TestCase):
         """Property: 任意合法动作下，step() 返回值形状正确"""
         env = QuantumSchedulingEnv(max_steps=100, seed=42)
         env.reset(seed=42)
-        obs, reward, terminated, truncated, info = env.step(action)
+        obs, _reward, terminated, truncated, info = env.step(action)
         assert obs.shape == (OBS_DIM,)
         assert obs.dtype == np.float32
         assert isinstance(terminated, bool)
@@ -77,7 +77,7 @@ class TestEnvProperty(unittest.TestCase):
         """Property: 任意动作下，奖励始终为有限浮点数"""
         env = QuantumSchedulingEnv(max_steps=100, seed=seed)
         env.reset(seed=seed)
-        obs, reward, terminated, truncated, info = env.step(action)
+        _obs, reward, _terminated, _truncated, _info = env.step(action)
         assert np.isfinite(reward)
 
     @given(seed=st.integers(min_value=0, max_value=1000))
@@ -88,7 +88,7 @@ class TestEnvProperty(unittest.TestCase):
         env.reset(seed=seed)
         terminated = False
         for _ in range(60):
-            obs, reward, terminated, truncated, info = env.step(0)
+            _obs, _reward, terminated, _truncated, _info = env.step(0)
             if terminated:
                 break
         assert terminated
@@ -130,11 +130,16 @@ class TestUtilsProperty(unittest.TestCase):
         assert len(norm1) == len(v)
         assert len(norm2) == len(v)
         # 幂等性：二次归一化结果与一次归一化一致
-        for a, b in zip(norm1, norm2):
+        for a, b in zip(norm1, norm2, strict=False):
             assert abs(a - b) < 1e-6
         # 保序性：当原始值差异足够大（未被归一化折叠为 0.5）时，
-        # 最大值/最小值索引保持一致
+        # 最大值/最小值索引保持一致。注意：当最大值与次大值（或最小值与次小值）
+        # 差异极小时，浮点精度可能导致归一化后并列，此时跳过索引校验。
         v_arr = np.array(v)
         if float(np.max(v_arr)) - float(np.min(v_arr)) >= 1e-10:
-            assert int(np.argmax(v)) == int(np.argmax(norm1))
-            assert int(np.argmin(v)) == int(np.argmin(norm1))
+            sorted_desc = np.sort(v_arr)[::-1]
+            sorted_asc = np.sort(v_arr)
+            if sorted_desc[0] - sorted_desc[1] >= 1e-10:
+                assert int(np.argmax(v)) == int(np.argmax(norm1))
+            if sorted_asc[1] - sorted_asc[0] >= 1e-10:
+                assert int(np.argmin(v)) == int(np.argmin(norm1))

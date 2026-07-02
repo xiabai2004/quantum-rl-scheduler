@@ -22,8 +22,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+from pydantic import ValidationError
 
 # 确保项目根目录在 Python 路径中
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -31,9 +33,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.visualization.app import (
     ConnectionManager,
+    SystemStatusUpdate,
+    TaskSubmit,
     app,
     simulate_scheduler,
     start_web_server,
+    verify_api_key,
 )
 
 # 注意：src/visualization/__init__.py 执行了 `from src.visualization.app import app`，
@@ -909,3 +914,696 @@ def test_start_web_server_invokes_uvicorn(monkeypatch):
     assert captured["host"] == "127.0.0.1"
     assert captured["port"] == 9999
     assert captured["app"] is app_module.app
+
+
+# ============================================================
+# Issue #75 扩展覆盖：API 端点 / Pydantic 验证 / 认证 / WebSocket / 错误处理
+# ============================================================
+
+
+async def _noop_simulate_scheduler() -> None:
+    """空操作后台任务，供 TestClient lifespan 使用，避免后台任务干扰测试。"""
+    return None
+
+
+class TestApiStatusEndpoint:
+    """GET /api/status 端点字段完整性与类型测试。"""
+
+    @pytest.mark.asyncio
+    async def test_returns_all_required_fields(self, async_client):
+        """/api/status 应包含所有必需的状态字段。"""
+        resp = await async_client.get("/api/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        required = {
+            "qubit_utilization",
+            "queue_length",
+            "average_wait_time",
+            "completed_tasks",
+            "current_step",
+            "current_strategy",
+            "strategy_options",
+            "real_machines",
+            "real_submissions",
+            "last_update",
+        }
+        assert required.issubset(data.keys())
+
+    @pytest.mark.asyncio
+    async def test_field_types(self, async_client):
+        """/api/status 各字段类型应符合约定。"""
+        data = (await async_client.get("/api/status")).json()
+        assert isinstance(data["qubit_utilization"], (int, float))
+        assert isinstance(data["queue_length"], int)
+        assert isinstance(data["average_wait_time"], (int, float))
+        assert isinstance(data["completed_tasks"], int)
+        assert isinstance(data["current_step"], int)
+        assert isinstance(data["current_strategy"], str)
+        assert isinstance(data["strategy_options"], list)
+        assert isinstance(data["real_machines"], list)
+        assert isinstance(data["real_submissions"], list)
+        assert isinstance(data["last_update"], str)
+
+    @pytest.mark.asyncio
+    async def test_qubit_utilization_in_range(self, async_client):
+        """量子比特利用率应在 [0, 1] 区间。"""
+        data = (await async_client.get("/api/status")).json()
+        assert 0.0 <= data["qubit_utilization"] <= 1.0
+
+    @pytest.mark.asyncio
+    async def test_strategy_options_contains_known_strategies(self, async_client):
+        """可选策略列表应包含已知策略。"""
+        data = (await async_client.get("/api/status")).json()
+        for s in ["DQN-Reward", "PPO-Balanced", "FCFS"]:
+            assert s in data["strategy_options"]
+
+
+class TestRealMachinesEndpoint:
+    """GET /api/real-machines 端点测试（有/无真机客户端）。"""
+
+    @pytest.mark.asyncio
+    async def test_no_client_returns_unavailable(self, async_client, monkeypatch):
+        """无真机客户端时应返回空列表、count=0、source=unavailable。"""
+        monkeypatch.setattr(app_module, "_get_real_machines_status", lambda: [])
+        resp = await async_client.get("/api/real-machines")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 0
+        assert data["machines"] == []
+        assert data["source"] == "unavailable"
+
+    @pytest.mark.asyncio
+    async def test_with_client_returns_cqlib(self, async_client, monkeypatch):
+        """有真机客户端时应返回机器列表且 source=cqlib。"""
+        machines = [
+            {"id": "tianyan_s", "type": "superconducting", "status": "running", "name": "天衍-S"},
+            {
+                "id": "tianyan_287",
+                "type": "superconducting",
+                "status": "calibrating",
+                "name": "天衍-287",
+            },
+        ]
+        monkeypatch.setattr(app_module, "_get_real_machines_status", lambda: machines)
+        resp = await async_client.get("/api/real-machines")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 2
+        assert data["source"] == "cqlib"
+        assert data["machines"] == machines
+
+    @pytest.mark.asyncio
+    async def test_response_structure_keys(self, async_client, monkeypatch):
+        """返回结构应包含 machines/count/source 三个键。"""
+        monkeypatch.setattr(app_module, "_get_real_machines_status", lambda: [])
+        data = (await async_client.get("/api/real-machines")).json()
+        assert set(data.keys()) == {"machines", "count", "source"}
+
+
+class TestRealSubmissionsEndpoint:
+    """GET /api/real-submissions 端点测试。"""
+
+    @pytest.mark.asyncio
+    async def test_returns_submissions_and_count(self, async_client, monkeypatch, tmp_path):
+        """应返回提交记录列表及 count 字段。"""
+        records = [{"step": i, "task_id": f"t{i}"} for i in range(1, 4)]
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        (results_dir / "real_times.json").write_text(json.dumps(records), encoding="utf-8")
+        monkeypatch.setattr(app_module, "_PROJECT_ROOT", str(tmp_path))
+        resp = await async_client.get("/api/real-submissions")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 3
+        assert isinstance(data["submissions"], list)
+
+    @pytest.mark.asyncio
+    async def test_no_file_returns_empty(self, async_client, monkeypatch, tmp_path):
+        """real_times.json 不存在时应返回 count=0。"""
+        monkeypatch.setattr(app_module, "_PROJECT_ROOT", str(tmp_path))
+        resp = await async_client.get("/api/real-submissions")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 0
+        assert data["submissions"] == []
+
+    @pytest.mark.asyncio
+    async def test_submissions_in_reverse_order(self, async_client, monkeypatch, tmp_path):
+        """提交记录应按倒序返回（最新在前）。"""
+        records = [{"step": 1}, {"step": 2}, {"step": 3}]
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        (results_dir / "real_times.json").write_text(json.dumps(records), encoding="utf-8")
+        monkeypatch.setattr(app_module, "_PROJECT_ROOT", str(tmp_path))
+        data = (await async_client.get("/api/real-submissions")).json()
+        assert [r["step"] for r in data["submissions"]] == [3, 2, 1]
+
+
+class TestTasksEndpoint:
+    """GET /api/tasks 与 POST /api/tasks 端点测试。"""
+
+    @pytest.mark.asyncio
+    async def test_get_all_returns_list(self, async_client):
+        """GET /api/tasks 无参数应返回列表。"""
+        resp = await async_client.get("/api/tasks")
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
+
+    @pytest.mark.asyncio
+    async def test_get_with_pending_filter(self, async_client):
+        """GET /api/tasks?status=pending 应只返回 pending 任务。"""
+        resp = await async_client.get("/api/tasks", params={"status": "pending"})
+        assert resp.status_code == 200
+        assert all(t["status"] == "pending" for t in resp.json())
+
+    @pytest.mark.asyncio
+    async def test_get_with_completed_filter_returns_empty(self, async_client):
+        """GET /api/tasks?status=completed 初始应返回空列表。"""
+        resp = await async_client.get("/api/tasks", params={"status": "completed"})
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    @pytest.mark.asyncio
+    async def test_post_success_returns_task_id(self, async_client, monkeypatch):
+        """POST /api/tasks 成功应返回 task_id 且以 QTASK- 开头。"""
+        monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+        payload = {
+            "user_id": "test_user",
+            "task_type": "quantum",
+            "priority": 4,
+            "qubit_count": 8,
+            "circuit_depth": 100,
+            "estimated_time": 30.0,
+        }
+        resp = await async_client.post("/api/tasks", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["task_id"].startswith("QTASK-")
+        assert "成功" in data["message"]
+
+    @pytest.mark.asyncio
+    async def test_post_invalid_priority_too_high(self, async_client, monkeypatch):
+        """priority=6 超过上限应返回 422。"""
+        monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+        payload = {
+            "user_id": "u",
+            "task_type": "quantum",
+            "priority": 6,
+            "qubit_count": 4,
+            "circuit_depth": 10,
+            "estimated_time": 5.0,
+        }
+        assert (await async_client.post("/api/tasks", json=payload)).status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_post_invalid_priority_too_low(self, async_client, monkeypatch):
+        """priority=0 低于下限应返回 422。"""
+        monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+        payload = {
+            "user_id": "u",
+            "task_type": "quantum",
+            "priority": 0,
+            "qubit_count": 4,
+            "circuit_depth": 10,
+            "estimated_time": 5.0,
+        }
+        assert (await async_client.post("/api/tasks", json=payload)).status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_post_invalid_qubit_count(self, async_client, monkeypatch):
+        """qubit_count=0 低于下限应返回 422。"""
+        monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+        payload = {
+            "user_id": "u",
+            "task_type": "quantum",
+            "priority": 3,
+            "qubit_count": 0,
+            "circuit_depth": 10,
+            "estimated_time": 5.0,
+        }
+        assert (await async_client.post("/api/tasks", json=payload)).status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_post_increases_task_count(self, async_client, monkeypatch):
+        """提交任务后任务总数应增加 1。"""
+        monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+        before = len((await async_client.get("/api/tasks")).json())
+        await async_client.post(
+            "/api/tasks",
+            json={
+                "user_id": "u",
+                "task_type": "quantum",
+                "priority": 3,
+                "qubit_count": 4,
+                "circuit_depth": 10,
+                "estimated_time": 5.0,
+            },
+        )
+        after = len((await async_client.get("/api/tasks")).json())
+        assert after == before + 1
+
+
+class TestMetricsEndpoints:
+    """/api/metrics 与 /metrics 端点测试。"""
+
+    @pytest.mark.asyncio
+    async def test_api_metrics_text_format(self, async_client):
+        """GET /api/metrics 应返回 Prometheus 文本格式，含 HELP/TYPE 注释行。"""
+        resp = await async_client.get("/api/metrics")
+        assert resp.status_code == 200
+        text = resp.text
+        assert "# HELP quantum_scheduler_qubit_utilization" in text
+        assert "# TYPE quantum_scheduler_qubit_utilization gauge" in text
+        assert "# TYPE quantum_scheduler_queue_length gauge" in text
+        assert "# TYPE quantum_scheduler_completed_tasks counter" in text
+        assert "# TYPE quantum_scheduler_current_step counter" in text
+
+    @pytest.mark.asyncio
+    async def test_api_metrics_contains_values(self, async_client):
+        """GET /api/metrics 应包含具体指标值行。"""
+        text = (await async_client.get("/api/metrics")).text
+        assert "quantum_scheduler_qubit_utilization " in text
+        assert "quantum_scheduler_queue_length " in text
+        assert "quantum_scheduler_completed_tasks " in text
+
+    def test_prometheus_metrics_content_type(self):
+        """GET /metrics 应返回 text/plain; version=... 格式。"""
+        with (
+            patch.object(app_module, "simulate_scheduler", _noop_simulate_scheduler),
+            TestClient(app) as client,
+        ):
+            resp = client.get("/metrics")
+            assert resp.status_code == 200
+            content_type = resp.headers.get("content-type", "")
+            assert "text/plain" in content_type
+            assert "version=" in content_type
+
+    def test_prometheus_metrics_body_contains_process_info(self):
+        """GET /metrics body 应包含 prometheus_client 默认进程指标。"""
+        with (
+            patch.object(app_module, "simulate_scheduler", _noop_simulate_scheduler),
+            TestClient(app) as client,
+        ):
+            body = client.get("/metrics").text
+            # prometheus_client 默认暴露 python_ 或 process_ 指标
+            assert "python_info" in body or "process_" in body or "scheduler_" in body
+
+
+class TestStrategyEndpoint:
+    """POST /api/strategy 端点测试。"""
+
+    @pytest.mark.asyncio
+    async def test_known_strategy_switches(self, async_client, monkeypatch):
+        """已知策略应切换成功且更新 current_strategy。"""
+        monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+        resp = await async_client.post("/api/strategy", params={"strategy": "DQN-Reward"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert "DQN-Reward" in data["message"]
+        status = await async_client.get("/api/status")
+        assert status.json()["current_strategy"] == "DQN-Reward"
+
+    @pytest.mark.asyncio
+    async def test_unknown_strategy_fails(self, async_client, monkeypatch):
+        """未知策略应返回 success=False 且不修改 current_strategy。"""
+        monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+        before = (await async_client.get("/api/status")).json()["current_strategy"]
+        resp = await async_client.post("/api/strategy", params={"strategy": "NonExistent"})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is False
+        after = (await async_client.get("/api/status")).json()["current_strategy"]
+        assert after == before
+
+    @pytest.mark.asyncio
+    async def test_auth_missing_returns_401(self, async_client, monkeypatch):
+        """配置密钥后缺少 X-API-Key 应返回 401。"""
+        monkeypatch.setenv("VISUALIZATION_API_KEY", "secret-key-123")
+        resp = await async_client.post("/api/strategy", params={"strategy": "FCFS"})
+        assert resp.status_code == 401
+
+
+class TestUpdateEndpoint:
+    """POST /api/update 端点测试。"""
+
+    @pytest.mark.asyncio
+    async def test_update_success(self, async_client, monkeypatch):
+        """合法 payload 应更新系统状态字段。"""
+        monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+        payload = {
+            "qubit_utilization": 0.77,
+            "queue_length": 9,
+            "completed_tasks": 50,
+            "average_wait_time": 7.7,
+        }
+        resp = await async_client.post("/api/update", json=payload)
+        assert resp.status_code == 200
+        status = resp.json()["status"]
+        assert status["qubit_utilization"] == 0.77
+        assert status["queue_length"] == 9
+        assert status["completed_tasks"] == 50
+        assert status["average_wait_time"] == 7.7
+
+    @pytest.mark.asyncio
+    async def test_qubit_utilization_out_of_bounds(self, async_client, monkeypatch):
+        """qubit_utilization>1.0 应返回 422。"""
+        monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+        payload = {
+            "qubit_utilization": 1.5,
+            "queue_length": 1,
+            "completed_tasks": 1,
+            "average_wait_time": 1.0,
+        }
+        assert (await async_client.post("/api/update", json=payload)).status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_negative_queue_length_out_of_bounds(self, async_client, monkeypatch):
+        """queue_length<0 应返回 422。"""
+        monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+        payload = {
+            "qubit_utilization": 0.5,
+            "queue_length": -1,
+            "completed_tasks": 1,
+            "average_wait_time": 1.0,
+        }
+        assert (await async_client.post("/api/update", json=payload)).status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_average_wait_time_out_of_bounds(self, async_client, monkeypatch):
+        """average_wait_time>86400 应返回 422。"""
+        monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+        payload = {
+            "qubit_utilization": 0.5,
+            "queue_length": 1,
+            "completed_tasks": 1,
+            "average_wait_time": 90000.0,
+        }
+        assert (await async_client.post("/api/update", json=payload)).status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_auth_missing_returns_401(self, async_client, monkeypatch):
+        """配置密钥后缺少 X-API-Key 应返回 401。"""
+        monkeypatch.setenv("VISUALIZATION_API_KEY", "secret-key-123")
+        resp = await async_client.post(
+            "/api/update",
+            json={
+                "qubit_utilization": 0.5,
+                "queue_length": 1,
+                "completed_tasks": 1,
+                "average_wait_time": 1.0,
+            },
+        )
+        assert resp.status_code == 401
+
+
+class TestPydanticValidation:
+    """TaskSubmit / SystemStatusUpdate Pydantic 字段边界值测试。"""
+
+    def test_task_submit_qubit_count_exceeds_287(self):
+        """qubit_count=288 超过 287 上限应抛 ValidationError。"""
+        with pytest.raises(ValidationError):
+            TaskSubmit(qubit_count=288)
+
+    def test_task_submit_qubit_count_at_max(self):
+        """qubit_count=287 应通过（边界值）。"""
+        t = TaskSubmit(qubit_count=287)
+        assert t.qubit_count == 287
+
+    def test_task_submit_qubit_count_below_min(self):
+        """qubit_count=0 低于下限应抛 ValidationError。"""
+        with pytest.raises(ValidationError):
+            TaskSubmit(qubit_count=0)
+
+    def test_task_submit_priority_exceeds_max(self):
+        """priority=6 超过 5 上限应抛 ValidationError。"""
+        with pytest.raises(ValidationError):
+            TaskSubmit(priority=6)
+
+    def test_task_submit_priority_below_min(self):
+        """priority=0 低于 1 下限应抛 ValidationError。"""
+        with pytest.raises(ValidationError):
+            TaskSubmit(priority=0)
+
+    def test_task_submit_estimated_time_below_min(self):
+        """estimated_time=0.05 低于 0.1 下限应抛 ValidationError。"""
+        with pytest.raises(ValidationError):
+            TaskSubmit(estimated_time=0.05)
+
+    def test_task_submit_estimated_time_above_max(self):
+        """estimated_time=86401 超过 86400 上限应抛 ValidationError。"""
+        with pytest.raises(ValidationError):
+            TaskSubmit(estimated_time=86401.0)
+
+    def test_task_submit_circuit_depth_below_min(self):
+        """circuit_depth=0 低于 1 下限应抛 ValidationError。"""
+        with pytest.raises(ValidationError):
+            TaskSubmit(circuit_depth=0)
+
+    def test_task_submit_circuit_depth_above_max(self):
+        """circuit_depth=10001 超过 10000 上限应抛 ValidationError。"""
+        with pytest.raises(ValidationError):
+            TaskSubmit(circuit_depth=10001)
+
+    def test_task_submit_user_id_empty(self):
+        """user_id 为空应抛 ValidationError。"""
+        with pytest.raises(ValidationError):
+            TaskSubmit(user_id="")
+
+    def test_task_submit_user_id_too_long(self):
+        """user_id 超过 128 字符应抛 ValidationError。"""
+        with pytest.raises(ValidationError):
+            TaskSubmit(user_id="a" * 200)
+
+    def test_task_submit_task_type_empty(self):
+        """task_type 为空应抛 ValidationError。"""
+        with pytest.raises(ValidationError):
+            TaskSubmit(task_type="")
+
+    def test_task_submit_defaults_valid(self):
+        """TaskSubmit 默认值应全部合法。"""
+        t = TaskSubmit()
+        assert t.user_id == "user_001"
+        assert t.task_type == "quantum"
+        assert t.priority == 3
+        assert t.qubit_count == 10
+        assert t.circuit_depth == 100
+        assert t.estimated_time == 60.0
+
+    def test_system_status_update_qubit_utilization_above_max(self):
+        """qubit_utilization>1.0 应抛 ValidationError。"""
+        with pytest.raises(ValidationError):
+            SystemStatusUpdate(qubit_utilization=1.1)
+
+    def test_system_status_update_negative(self):
+        """qubit_utilization<0 应抛 ValidationError。"""
+        with pytest.raises(ValidationError):
+            SystemStatusUpdate(qubit_utilization=-0.1)
+
+    def test_system_status_update_queue_length_negative(self):
+        """queue_length<0 应抛 ValidationError。"""
+        with pytest.raises(ValidationError):
+            SystemStatusUpdate(queue_length=-1)
+
+    def test_system_status_update_average_wait_time_above_max(self):
+        """average_wait_time>86400 应抛 ValidationError。"""
+        with pytest.raises(ValidationError):
+            SystemStatusUpdate(average_wait_time=100000.0)
+
+    def test_system_status_update_defaults_valid(self):
+        """SystemStatusUpdate 默认值应全部合法。"""
+        u = SystemStatusUpdate()
+        assert u.qubit_utilization == 0.0
+        assert u.queue_length == 0
+        assert u.completed_tasks == 0
+        assert u.average_wait_time == 0.0
+
+
+class TestAuthLayer:
+    """verify_api_key 认证层测试（未配置/缺失/不匹配/匹配）。"""
+
+    @pytest.mark.asyncio
+    async def test_no_key_configured_allows(self, monkeypatch):
+        """未配置 VISUALIZATION_API_KEY 时应放行（返回 None）。"""
+        monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+        assert await verify_api_key(x_api_key=None) is None
+
+    @pytest.mark.asyncio
+    async def test_missing_header_rejected(self, monkeypatch):
+        """配置密钥后缺失 X-API-Key 应抛 HTTPException 401。"""
+        monkeypatch.setenv("VISUALIZATION_API_KEY", "secret-key-123")
+        with pytest.raises(HTTPException) as exc:
+            await verify_api_key(x_api_key=None)
+        assert exc.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_wrong_key_rejected(self, monkeypatch):
+        """配置密钥后不匹配的 X-API-Key 应抛 HTTPException 401。"""
+        monkeypatch.setenv("VISUALIZATION_API_KEY", "secret-key-123")
+        with pytest.raises(HTTPException) as exc:
+            await verify_api_key(x_api_key="wrong")
+        assert exc.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_correct_key_allows(self, monkeypatch):
+        """配置密钥后匹配的 X-API-Key 应放行。"""
+        monkeypatch.setenv("VISUALIZATION_API_KEY", "secret-key-123")
+        assert await verify_api_key(x_api_key="secret-key-123") is None
+
+    @pytest.mark.asyncio
+    async def test_empty_env_value_disables_auth(self, monkeypatch):
+        """VISUALIZATION_API_KEY 为空字符串时应禁用认证。"""
+        monkeypatch.setenv("VISUALIZATION_API_KEY", "")
+        assert await verify_api_key(x_api_key=None) is None
+
+
+class TestWebSocket:
+    """WebSocket /ws 端点测试（连接、广播、断开）。"""
+
+    def test_init_message_structure(self):
+        """连接后应收到 init 消息，包含 status/tasks/ppo_stats。"""
+        with (
+            patch.object(app_module, "simulate_scheduler", _noop_simulate_scheduler),
+            TestClient(app) as client,
+            client.websocket_connect("/ws") as ws,
+        ):
+            msg = ws.receive_json()
+            assert msg["type"] == "init"
+            assert "status" in msg
+            assert "tasks" in msg
+            assert "ppo_stats" in msg
+
+    def test_ping_pong(self):
+        """发送 ping 心跳应收到 pong 响应。"""
+        with (
+            patch.object(app_module, "simulate_scheduler", _noop_simulate_scheduler),
+            TestClient(app) as client,
+            client.websocket_connect("/ws") as ws,
+        ):
+            ws.receive_json()  # 消费 init 消息
+            ws.send_text(json.dumps({"action": "ping"}))
+            pong = ws.receive_json()
+            assert pong["type"] == "pong"
+
+    def test_invalid_json_returns_error(self):
+        """发送非法 JSON 应返回 error 消息而非断开连接。"""
+        with (
+            patch.object(app_module, "simulate_scheduler", _noop_simulate_scheduler),
+            TestClient(app) as client,
+            client.websocket_connect("/ws") as ws,
+        ):
+            ws.receive_json()
+            ws.send_text("not-a-json")
+            err = ws.receive_json()
+            assert err["type"] == "error"
+            assert "Invalid JSON" in err["message"]
+
+    def test_disconnect_reduces_connection_count(self):
+        """断开连接后 active_connections 数量应回落。"""
+        with (
+            patch.object(app_module, "simulate_scheduler", _noop_simulate_scheduler),
+            TestClient(app) as client,
+        ):
+            baseline = len(app_module.manager.active_connections)
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_json()
+                during = len(app_module.manager.active_connections)
+                assert during >= baseline + 1
+            # 退出 with 后连接应被清理
+            assert len(app_module.manager.active_connections) < during
+
+    @pytest.mark.asyncio
+    async def test_post_task_triggers_broadcast(self, async_client, monkeypatch):
+        """POST /api/tasks 应调用 manager.broadcast 广播 task_added 消息。"""
+        monkeypatch.delenv("VISUALIZATION_API_KEY", raising=False)
+        broadcast_mock = AsyncMock()
+        monkeypatch.setattr(app_module.manager, "broadcast", broadcast_mock)
+        await async_client.post(
+            "/api/tasks",
+            json={
+                "user_id": "u",
+                "task_type": "quantum",
+                "priority": 3,
+                "qubit_count": 4,
+                "circuit_depth": 10,
+                "estimated_time": 5.0,
+            },
+        )
+        broadcast_mock.assert_called_once()
+        call_args = broadcast_mock.call_args[0][0]
+        assert call_args["type"] == "task_added"
+        assert "task" in call_args
+        assert "status" in call_args
+
+
+class TestErrorHandling:
+    """端点错误处理路径测试。"""
+
+    @pytest.mark.asyncio
+    async def test_real_submissions_invalid_json_returns_empty(
+        self, async_client, monkeypatch, tmp_path
+    ):
+        """real_times.json 非法 JSON 时 /api/real-submissions 应返回 count=0。"""
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        (results_dir / "real_times.json").write_text("not-json", encoding="utf-8")
+        monkeypatch.setattr(app_module, "_PROJECT_ROOT", str(tmp_path))
+        data = (await async_client.get("/api/real-submissions")).json()
+        assert data["count"] == 0
+        assert data["submissions"] == []
+
+    @pytest.mark.asyncio
+    async def test_ppo_comparison_invalid_json_returns_error(
+        self, async_client, monkeypatch, tmp_path
+    ):
+        """仿真结果文件非法 JSON 时 /api/ppo/comparison 应返回 error。"""
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        (results_dir / "simulation_results_test.json").write_text("not-json", encoding="utf-8")
+        monkeypatch.setattr(app_module, "_PROJECT_ROOT", str(tmp_path))
+        data = (await async_client.get("/api/ppo/comparison")).json()
+        assert "error" in data
+
+    @pytest.mark.asyncio
+    async def test_ppo_stats_invalid_json_returns_error(
+        self, async_client, monkeypatch, tmp_path
+    ):
+        """仿真结果文件非法 JSON 时 /api/ppo/stats 应返回 error。"""
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        (results_dir / "simulation_results_test.json").write_text("not-json", encoding="utf-8")
+        monkeypatch.setattr(app_module, "_PROJECT_ROOT", str(tmp_path))
+        data = (await async_client.get("/api/ppo/stats")).json()
+        assert "error" in data
+
+    @pytest.mark.asyncio
+    async def test_ppo_predict_exception_returns_error(self, async_client, monkeypatch):
+        """PPO 推理抛异常时应返回 error 且 action=None。"""
+        mock_model = MagicMock()
+        mock_model.predict.side_effect = RuntimeError("infer fail")
+        mock_env = MagicMock()
+        mock_env.reset.return_value = ([0.0], {})
+        monkeypatch.setattr(app_module, "_get_ppo_model", lambda: mock_model)
+        monkeypatch.setattr(app_module, "_ppo_env", mock_env)
+        data = (await async_client.get("/api/ppo/predict")).json()
+        assert "error" in data
+        assert data["action"] is None
+
+    @pytest.mark.asyncio
+    async def test_ppo_comparison_no_files_returns_error(
+        self, async_client, monkeypatch, tmp_path
+    ):
+        """无仿真结果文件时 /api/ppo/comparison 应返回 error。"""
+        (tmp_path / "results").mkdir()
+        monkeypatch.setattr(app_module, "_PROJECT_ROOT", str(tmp_path))
+        data = (await async_client.get("/api/ppo/comparison")).json()
+        assert "error" in data
+        assert data["strategies"] == []
+
+    @pytest.mark.asyncio
+    async def test_ppo_predict_no_env_returns_error(self, async_client, monkeypatch):
+        """模型已加载但环境未初始化时应返回 error。"""
+        mock_model = MagicMock()
+        monkeypatch.setattr(app_module, "_get_ppo_model", lambda: mock_model)
+        monkeypatch.setattr(app_module, "_ppo_env", None)
+        data = (await async_client.get("/api/ppo/predict")).json()
+        assert "error" in data

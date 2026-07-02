@@ -10,6 +10,7 @@ Tianyan Cloud Platform API Client
 """
 
 import os
+import random
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -22,7 +23,7 @@ import yaml
 from dotenv import load_dotenv
 from loguru import logger
 
-from src.exceptions import CircuitOpenError
+from src.exceptions import CircuitOpenError, RateLimitError
 from src.utils.alerts import alert_error
 from src.utils.metrics import (
     api_calls,
@@ -123,6 +124,147 @@ class CircuitBreaker:
         return self.state.value
 
 
+class TokenBucketRateLimiter:
+    """令牌桶限流器
+
+    基于令牌桶算法控制请求频率：桶以恒定速率 ``rate`` 生成令牌，每次请求
+    消费一定数量令牌；桶满时多余的令牌溢出，桶空时请求需等待令牌补充。
+
+    适用于平滑突发流量、保护下游服务不被过载的场景。
+
+    Args:
+        capacity: 桶容量（最大突发请求数），达到上限后多余令牌溢出
+        rate: 令牌生成速率（每秒生成的令牌数），即稳态最大 QPS
+
+    Attributes:
+        capacity: 桶容量
+        rate: 令牌生成速率（令牌/秒）
+    """
+
+    def __init__(self, capacity: float, rate: float) -> None:
+        """初始化令牌桶限流器
+
+        Args:
+            capacity: 桶容量（最大突发请求数）
+            rate: 令牌生成速率（每秒令牌数）
+        """
+        self.capacity: float = capacity
+        self.rate: float = rate
+        self._tokens: float = capacity
+        self._last_refill: float = monotonic()
+
+    def _refill(self) -> None:
+        """根据流逝时间补充令牌
+
+        使用单调时钟计算距上次补充的时间差，按 ``rate`` 补充令牌，
+        但不超过 ``capacity`` 上限。
+        """
+        now = monotonic()
+        elapsed = now - self._last_refill
+        if elapsed > 0:
+            self._tokens = min(self.capacity, self._tokens + elapsed * self.rate)
+            self._last_refill = now
+
+    def acquire(self, tokens: float = 1.0) -> float:
+        """获取令牌，返回需要等待的时间
+
+        若桶中令牌充足则立即消费并返回 0；若不足则计算补充所需时间并返回。
+        调用方应自行 ``time.sleep`` 等待返回的秒数后再重试。
+
+        Args:
+            tokens: 需要消费的令牌数，默认 1.0
+
+        Returns:
+            需要等待的时间（秒）；0.0 表示无需等待
+        """
+        self._refill()
+        if self._tokens >= tokens:
+            self._tokens -= tokens
+            return 0.0
+        deficit = tokens - self._tokens
+        wait_time = deficit / self.rate if self.rate > 0 else float("inf")
+        return wait_time
+
+    def try_acquire(self, tokens: float = 1.0) -> bool:
+        """尝试获取令牌（非阻塞）
+
+        若桶中令牌充足则消费并返回 True；否则返回 False，不阻塞。
+
+        Args:
+            tokens: 需要消费的令牌数，默认 1.0
+
+        Returns:
+            ``True`` 表示获取成功，``False`` 表示令牌不足
+        """
+        self._refill()
+        if self._tokens >= tokens:
+            self._tokens -= tokens
+            return True
+        return False
+
+    @property
+    def available_tokens(self) -> float:
+        """当前可用令牌数（补充后）"""
+        self._refill()
+        return self._tokens
+
+
+class QuotaTracker:
+    """API 配额追踪器
+
+    按小时与日两个窗口统计 API 调用次数，窗口过期后自动重置计数。
+    使用 ``time.time()``（墙上时钟）而非单调时钟，以便与服务器侧配额窗口对齐。
+
+    Attributes:
+        hourly_count: 当前小时窗口内的调用次数
+        daily_count: 当前日窗口内的调用次数
+    """
+
+    HOUR_SECONDS: float = 3600.0
+    DAY_SECONDS: float = 86400.0
+
+    def __init__(self) -> None:
+        """初始化配额追踪器，窗口起点设为当前时间"""
+        self._hourly_count: int = 0
+        self._daily_count: int = 0
+        self._hourly_window_start: float = time.time()
+        self._daily_window_start: float = time.time()
+
+    def record(self) -> None:
+        """记录一次 API 调用，自动检查并重置过期窗口"""
+        now = time.time()
+        if now - self._hourly_window_start >= self.HOUR_SECONDS:
+            self._hourly_count = 0
+            self._hourly_window_start = now
+        if now - self._daily_window_start >= self.DAY_SECONDS:
+            self._daily_count = 0
+            self._daily_window_start = now
+        self._hourly_count += 1
+        self._daily_count += 1
+
+    @property
+    def hourly_count(self) -> int:
+        """当前小时窗口内的调用次数（过期窗口返回 0）"""
+        if time.time() - self._hourly_window_start >= self.HOUR_SECONDS:
+            return 0
+        return self._hourly_count
+
+    @property
+    def daily_count(self) -> int:
+        """当前日窗口内的调用次数（过期窗口返回 0）"""
+        if time.time() - self._daily_window_start >= self.DAY_SECONDS:
+            return 0
+        return self._daily_count
+
+    def reset(self) -> None:
+        """手动重置所有计数与窗口起点（主要用于测试）"""
+        now = time.time()
+        self._hourly_count = 0
+        self._daily_count = 0
+        self._hourly_window_start = now
+        self._daily_window_start = now
+
+
 class TianyanClient:
     """
     天衍量子云平台客户端
@@ -164,6 +306,7 @@ class TianyanClient:
         timeout: 单次 API 请求超时时间（秒），默认 30.0
         max_retries: API 请求失败最大重试次数，默认 3
         retry_delay: 重试间隔（秒），默认 1.0
+        max_requests_per_second: 每秒最大请求数（令牌桶限流），默认 None 不限流
     """
 
     def __init__(
@@ -175,6 +318,7 @@ class TianyanClient:
         timeout: float | None = None,
         max_retries: int | None = None,
         retry_delay: float | None = None,
+        max_requests_per_second: float | None = None,
     ):
         """初始化天衍云客户端
 
@@ -191,6 +335,11 @@ class TianyanClient:
         - ``max_retries`` ← ``TIANYAN_API_MAX_RETRIES``（默认 3）
         - ``retry_delay`` ← ``TIANYAN_API_RETRY_DELAY``（默认 1.0）
 
+        限流配置（Issue #84）：
+        - ``max_requests_per_second`` ← ``TIANYAN_API_RATE_LIMIT``（默认 None 不限流）
+        - 启用后使用令牌桶算法控制请求频率，429 响应触发自适应指数退避 + jitter
+        - 限流触发的失败（RateLimitError）不计入熔断器失败计数
+
         Args:
             api_key: API 密钥，若为 None 则从环境变量 ``TIANYAN_API_KEY``
                 （或别名 ``TIANYAN_API_TOKEN``）读取。真实模式下若未提供且
@@ -204,6 +353,10 @@ class TianyanClient:
                 可通过环境变量 ``TIANYAN_API_MAX_RETRIES`` 覆盖。
             retry_delay: 重试间隔（秒），默认 1.0，
                 可通过环境变量 ``TIANYAN_API_RETRY_DELAY`` 覆盖。
+            max_requests_per_second: 每秒最大请求数（令牌桶限流），
+                None 或 0 表示不限流；也可通过环境变量
+                ``TIANYAN_API_RATE_LIMIT`` 配置。启用后 429 响应将触发
+                自适应指数退避 + 随机 jitter，且限流失败不计入熔断器。
 
         Raises:
             ValueError: 真实模式下未提供 ``api_key`` 且环境变量
@@ -225,6 +378,23 @@ class TianyanClient:
             retry_delay if retry_delay is not None
             else float(os.getenv("TIANYAN_API_RETRY_DELAY", "1.0"))
         )
+
+        # 限流配置（Issue #84）：显式传参 > 环境变量 > None（不限流）
+        rate_limit = (
+            max_requests_per_second
+            if max_requests_per_second is not None
+            else float(os.getenv("TIANYAN_API_RATE_LIMIT", "0"))
+        )
+        if rate_limit > 0:
+            self._rate_limiter: TokenBucketRateLimiter | None = TokenBucketRateLimiter(
+                capacity=rate_limit, rate=rate_limit
+            )
+            logger.info(f"API 限流已启用：{rate_limit} 请求/秒")
+        else:
+            self._rate_limiter = None
+
+        # 配额追踪（始终启用，仅记录不影响行为）
+        self._quota_tracker: QuotaTracker = QuotaTracker()
 
         # 确定是否使用 Mock 模式
         self.mock_mode = self._detect_mock_mode(mock_mode)
@@ -381,14 +551,72 @@ class TianyanClient:
             return default_url
 
     # ------------------------------------------------------------------
-    # 内部工具：重试、指标埋点、熔断器状态同步
+    # 内部工具：限流、重试、指标埋点、熔断器状态同步
     # ------------------------------------------------------------------
 
-    def _call_with_retry(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-        """带重试的 API 调用包装器
+    def _apply_rate_limit(self) -> None:
+        """应用令牌桶限流
 
-        在调用失败时按 ``max_retries`` 与 ``retry_delay`` 进行重试，
-        重试耗尽后抛出最后一次异常。
+        若限流器已启用且令牌不足，阻塞等待令牌补充后再继续。
+        限流器未启用时（``_rate_limiter is None``）直接返回。
+        """
+        if self._rate_limiter is None:
+            return
+        wait_time = self._rate_limiter.acquire()
+        if wait_time > 0:
+            logger.debug(f"令牌桶限流：等待 {wait_time:.3f}s 后放行")
+            time.sleep(wait_time)
+
+    def _track_quota(self) -> None:
+        """记录一次 API 调用到配额追踪器"""
+        self._quota_tracker.record()
+
+    @staticmethod
+    def _is_rate_limited(exc: Exception) -> bool:
+        """判断异常是否由限流（HTTP 429）引起
+
+        检查异常是否为 ``RateLimitError`` 或携带 ``status_code == 429`` 属性。
+
+        Args:
+            exc: 待检查的异常对象
+
+        Returns:
+            ``True`` 表示该异常由限流引起
+        """
+        if isinstance(exc, RateLimitError):
+            return True
+        status_code = getattr(exc, "status_code", None)
+        return status_code == 429
+
+    def _compute_adaptive_backoff(self, attempt: int, retry_after: float | None = None) -> float:
+        """计算自适应退避时间（指数退避 + 随机 jitter）
+
+        基数为 ``retry_delay * 2^attempt``，叠加 0~10% 的随机 jitter，
+        若服务端返回 ``Retry-After`` 则取其与指数退避的较大值。
+
+        Args:
+            attempt: 当前重试次数（从 0 开始）
+            retry_after: 服务端建议的等待时间（秒），可选
+
+        Returns:
+            退避时间（秒）
+        """
+        base: float = self.retry_delay * (2**attempt)
+        jitter: float = random.uniform(0, base * 0.1)
+        backoff: float = base + jitter
+        if retry_after is not None and retry_after > backoff:
+            return retry_after
+        return backoff
+
+    def _call_with_retry(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        """带重试与限流的 API 调用包装器
+
+        集成令牌桶限流、配额追踪、429 自适应退避与常规重试：
+
+        - 每次调用前应用令牌桶限流（若已启用）并记录配额
+        - 429 限流异常使用指数退避 + jitter 重试，不计入熔断器失败计数
+        - 其他异常按 ``retry_delay`` 固定间隔重试
+        - 重试耗尽后抛出最后一次异常
 
         Args:
             func: 待调用的可调用对象。
@@ -400,13 +628,39 @@ class TianyanClient:
 
         Raises:
             Exception: 重试耗尽后抛出最后一次异常。
+            RateLimitError: 429 限流重试耗尽后抛出。
         """
         last_exc: Exception | None = None
         total_attempts = max(1, self.max_retries + 1)
         for attempt in range(total_attempts):
             try:
+                # 限流：获取令牌（必要时阻塞等待）
+                self._apply_rate_limit()
+                # 配额追踪
+                self._track_quota()
                 return func(*args, **kwargs)
             except Exception as e:
+                # 429 限流：转换为 RateLimitError 并使用自适应退避
+                if self._is_rate_limited(e):
+                    retry_after = getattr(e, "retry_after", None)
+                    if not isinstance(e, RateLimitError):
+                        e = RateLimitError(
+                            f"API 限流（429）: {e}",
+                            retry_after=retry_after,
+                        )
+                    last_exc = e
+                    if attempt < total_attempts - 1:
+                        backoff = self._compute_adaptive_backoff(attempt, retry_after)
+                        logger.debug(
+                            f"API 限流（429），第 {attempt + 1}/{total_attempts} 次退避 "
+                            f"{backoff:.3f}s 后重试"
+                        )
+                        time.sleep(backoff)
+                    else:
+                        logger.debug(
+                            f"API 限流重试耗尽（共 {total_attempts} 次）: {e}"
+                        )
+                    continue
                 last_exc = e
                 if attempt < total_attempts - 1:
                     logger.debug(
@@ -477,7 +731,7 @@ class TianyanClient:
         # 真实模式委托 cqlib
         if self._cqlib is not None:
             with self._observe_api_call("authenticate", "auth"):
-                return cast(bool, self._call_with_retry(self._cqlib.authenticate))
+                return self._call_with_retry(self._cqlib.authenticate)
 
         logger.error("认证失败：未配置有效 API 密钥或 cqlib 客户端")
         return False
@@ -575,7 +829,16 @@ class TianyanClient:
                     message="未配置有效 API 密钥或 cqlib 客户端，无法查询任务状态",
                 )
         except Exception as e:
-            # 熔断器需捕获所有异常以记录失败计数，原异常重新抛出由上层处理
+            # 429 限流：转换为 RateLimitError，不计入熔断器失败计数（Issue #84）
+            if self._is_rate_limited(e):
+                if not isinstance(e, RateLimitError):
+                    e = RateLimitError(
+                        f"API 限流（429）: {e}",
+                        retry_after=getattr(e, "retry_after", None),
+                    )
+                logger.debug(f"get_task_status 限流触发，不计入熔断器: {e}")
+                raise e
+            # 其他异常计入熔断器失败计数，原异常重新抛出由上层处理
             logger.debug(f"get_task_status 失败，已触发熔断器失败计数: {type(e).__name__}: {e}")
             if self._circuit_breaker:
                 self._circuit_breaker.on_failure()
@@ -606,10 +869,7 @@ class TianyanClient:
         # 真实模式委托 cqlib
         if self._cqlib is not None:
             with self._observe_api_call("get_task_result", "task_result"):
-                return cast(
-                    dict[str, Any],
-                    self._call_with_retry(self._cqlib.get_task_result, task_id),
-                )
+                return self._call_with_retry(self._cqlib.get_task_result, task_id)
 
         raise TianyanAPIError(
             status_code=500,
@@ -637,7 +897,7 @@ class TianyanClient:
         # 真实模式委托 cqlib
         if self._cqlib is not None:
             with self._observe_api_call("list_backends", "backends"):
-                return cast(list[dict[str, Any]], self._call_with_retry(self._cqlib.list_backends))
+                return self._call_with_retry(self._cqlib.list_backends)
 
         raise TianyanAPIError(
             status_code=500,
@@ -672,10 +932,7 @@ class TianyanClient:
         # 真实模式委托 cqlib
         if self._cqlib is not None:
             with self._observe_api_call("get_backend_info", "backend_info"):
-                return cast(
-                    dict[str, Any],
-                    self._call_with_retry(self._cqlib.get_backend_info, backend_name),
-                )
+                return self._call_with_retry(self._cqlib.get_backend_info, backend_name)
 
         raise TianyanAPIError(
             status_code=500,
@@ -738,10 +995,7 @@ class TianyanClient:
         # 真实模式委托 cqlib
         if self._cqlib is not None:
             with self._observe_api_call("get_queue_status", "queue_status"):
-                return cast(
-                    dict[str, Any],
-                    self._call_with_retry(self._cqlib.get_queue_status),
-                )
+                return self._call_with_retry(self._cqlib.get_queue_status)
 
         raise TianyanAPIError(
             status_code=500,
@@ -761,6 +1015,32 @@ class TianyanClient:
         if self._circuit_breaker is None:
             return "closed"
         return self._circuit_breaker.get_state()
+
+    def get_hourly_quota(self) -> int:
+        """获取当前小时窗口内的 API 调用次数
+
+        Returns:
+            当前小时窗口内的调用计数
+        """
+        return self._quota_tracker.hourly_count
+
+    def get_daily_quota(self) -> int:
+        """获取当前日窗口内的 API 调用次数
+
+        Returns:
+            当前日窗口内的调用计数
+        """
+        return self._quota_tracker.daily_count
+
+    def get_available_rate_limit_tokens(self) -> float | None:
+        """获取令牌桶当前可用令牌数
+
+        Returns:
+            可用令牌数；限流未启用时返回 None
+        """
+        if self._rate_limiter is None:
+            return None
+        return self._rate_limiter.available_tokens
 
     def wait_for_task(
         self,
@@ -830,10 +1110,10 @@ if __name__ == "__main__":
 
     # 验证 API 密钥
     if not client.authenticate():
-        print("认证失败，请检查 TIANYAN_API_KEY 环境变量")
-        exit(1)
+        logger.error("认证失败，请检查 TIANYAN_API_KEY 环境变量")
+        sys.exit(1)
 
-    print("认证通过")
+    logger.info("认证通过")
 
     # 提交量子任务示例
     qasm_str = """
@@ -848,13 +1128,13 @@ if __name__ == "__main__":
 
     try:
         task_id = client.submit_quantum_task(circuit_qasm=qasm_str, shots=1024)
-        print(f"任务提交成功，task_id={task_id}")
+        logger.info(f"任务提交成功，task_id={task_id}")
 
         # 等待结果
         result = client.wait_for_task(task_id, poll_interval=3.0, timeout=120.0)
-        print(f"任务结果: {result}")
+        logger.info(f"任务结果: {result}")
 
     except TianyanAPIError as e:
-        print(f"API 错误: {e}")
+        logger.error(f"API 错误: {e}")
     except requests.exceptions.RequestException as e:
-        print(f"网络错误: {e}")
+        logger.error(f"网络错误: {e}")
