@@ -57,12 +57,16 @@ def setup_logging(
 
 
 # 配置加载
-def load_config(config_path: str = "config/config.yaml") -> dict[str, Any]:
+def load_config(
+    config_path: str = "config/config.yaml",
+    validate: bool = False,
+) -> dict[str, Any]:
     """
     加载配置文件
 
     Args:
         config_path: 配置文件路径
+        validate: 是否启用 Pydantic Schema 校验（默认 False）
 
     Returns:
         配置字典
@@ -70,6 +74,16 @@ def load_config(config_path: str = "config/config.yaml") -> dict[str, Any]:
     try:
         with open(config_path, encoding="utf-8") as f:
             config = yaml.safe_load(f)
+
+        # 可选：Pydantic Schema 校验
+        if validate and isinstance(config, dict):
+            try:
+                from src.config.schema import validate_and_print
+
+                validate_and_print(config)
+            except ImportError:
+                logger.debug("跳过 Pydantic 校验（schema 模块不可用）")
+
         logger.info(f"配置文件加载成功：{config_path}")
         return cast(dict[str, Any], config)
     except Exception as e:
