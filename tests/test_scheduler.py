@@ -231,16 +231,17 @@ class TestMultiMachineScheduling(unittest.TestCase):
             machine_configs=DEFAULT_MACHINE_CONFIGS,
         )
         env.reset(seed=42)
-        
+
         # 手动注入一个量子任务确保能被调度
         from src.scheduler.env import Task
+
         quantum_task = Task(task_id="test_quantum", task_type="quantum", qubit_count=5)
         env._task_queue.insert(0, quantum_task)
         env._current_task = quantum_task
-        
+
         # 执行一步量子调度
         env.step(1)  # ACTION_QUANTUM
-        
+
         # 至少有一台机器被调度
         used_machines = sum(1 for c in env._machine_schedule_count.values() if c > 0)
         self.assertGreaterEqual(used_machines, 1)

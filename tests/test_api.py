@@ -17,6 +17,14 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+# 检测 cqlib 是否可用（CI 环境可能未安装真机 SDK）
+try:
+    import cqlib  # noqa: F401
+
+    _HAS_CQLIB = True
+except ImportError:
+    _HAS_CQLIB = False
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.api import get_client, get_cqlib_client
@@ -1033,6 +1041,7 @@ class TestMultiMachineCoordinator(unittest.TestCase):
         """空机器列表应返回空字典。"""
         self.assertEqual(create_multi_machine_clients("key", []), {})
 
+    @unittest.skipUnless(_HAS_CQLIB, "cqlib SDK not installed (CI environment)")
     def test_create_multi_machine_clients_with_machines(self):
         """给定机器列表应返回对应的客户端映射。"""
         clients = create_multi_machine_clients("key", ["tianyan_s", "tianyan_sw"])
@@ -1051,6 +1060,7 @@ class TestMultiMachineCoordinator(unittest.TestCase):
         self.assertEqual(coord._fail_count, {"tianyan_s": 0, "tianyan_sw": 0})
         self.assertEqual(coord._clients, {})
 
+    @unittest.skipUnless(_HAS_CQLIB, "cqlib SDK not installed (CI environment)")
     def test_get_client_lazy_and_cache(self):
         """_get_client 应懒加载并缓存客户端。"""
         coord = MultiMachineCqlibCoordinator(
@@ -1128,6 +1138,7 @@ class TestMultiMachineCoordinator(unittest.TestCase):
         self.assertEqual(stats["tianyan_sw"]["fail"], 2)
         self.assertEqual(stats["tianyan_s"]["fail"], 0)
 
+    @unittest.skipUnless(_HAS_CQLIB, "cqlib SDK not installed (CI environment)")
     def test_as_client_map_triggers_lazy_load(self):
         """as_client_map 应触发所有纳管机器的懒加载并返回映射。"""
         coord = MultiMachineCqlibCoordinator(
