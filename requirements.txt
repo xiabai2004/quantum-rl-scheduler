@@ -33,7 +33,7 @@ aiosqlite>=0.19.0
 redis>=5.0.0
 
 # HTTP客户端
-requests>=2.31.0
+requests>=2.34.2
 httpx>=0.25.0
 
 # 配置管理
